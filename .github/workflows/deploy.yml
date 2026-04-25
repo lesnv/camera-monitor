@@ -8,13 +8,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /opt/camera-monitor
-            git pull origin main
-            docker compose up -d --build
+      - name: Trigger deploy webhook
+        run: |
+          curl -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}" \
+               -H "X-Deploy-Token: ${{ secrets.DEPLOY_SECRET }}" \
+               -H "Content-Type: application/json" \
+               --fail
