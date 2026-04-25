@@ -4,3 +4,11 @@ __pycache__/
 data/
 static/screenshots/
 *.db
+# Бэкапы и временные файлы
+backups/
+*.bak
+*.broken
+*.tmp
+
+# Загруженные скриншоты
+uploads/
