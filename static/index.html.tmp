@@ -1,0 +1,1 @@
+    .tabs a.tab { color: var(--text); text-decoration: none; display: inline-block; cursor: pointer; }

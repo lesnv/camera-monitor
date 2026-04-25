@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚙️ Настройки камер</title>
+  <link rel="icon" href=",">
+  <style>
+    :root { --bg:#0b1220; --card:#1e293b; --accent:#3b82f6; --success:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; }
+    body { font-family: system-ui; background: var(--bg); color: var(--text); margin: 0; padding: 16px; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    .header { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #334155; margin-bottom:20px; flex-wrap:wrap; gap:8px; }
+    .card { background: var(--card); padding:16px; border-radius:8px; margin:12px 0; }
+    .cam-card { background:#0f172a; padding:16px; border-radius:8px; margin:12px 0; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .grid-4 { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+    input, select, textarea { width:100%; padding:10px; margin:4px 0; border-radius:6px; border:1px solid #475569; background:#1e293b; color:var(--text); box-sizing:border-box; }
+    label { font-size:0.85em; color:var(--muted); display:block; margin:8px 0 4px; }
+    code { background:#0b1220; padding:2px 6px; border-radius:4px; color:#60a5fa; word-break:break-all; display:block; margin:4px 0; }
+    .btn { background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; margin:4px; font-size:0.9em; }
+    .btn:hover { opacity:0.9; }
+    .btn.gray { background:#475569; }
+    .btn.red { background:var(--danger); }
+    .btn.success { background:var(--success); color:#000; }
+    .status { padding:4px 12px; border-radius:999px; font-size:0.85em; }
+    .status.on { background:var(--success); color:#000; }
+    .status.off { background:var(--danger); color:#fff; }
+    @media (max-width:768px) { .grid-2, .grid-4 { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>⚙️ <span id="device-name">Настройки камер</span> <code id="device-ip" style="font-size:0.8em"></code></h1>
+      <button class="btn gray" onclick="location.href='/'">← Назад к устройствам</button>
+    </div>
+    
+    <!-- Форма добавления/редактирования -->
+    <div class="card" id="edit-form">
+      <h3 id="form-title">➕ Добавить камеру</h3>
+      <input type="hidden" id="edit-camera-id">
+      
+      <div class="grid-2">
+        <div>
+          <label>Название *</label>
+          <input id="c-name" placeholder="Например: Вход">
+        </div>
+        <div>
+          <label>Модель анализа</label>
+          <select id="c-model">
+            <option value="qwen2.5vl:3b">qwen2.5vl:3b (быстро)</option>
+            <option value="llava:7b">llava:7b (качественнее)</option>
+          </select>
+        </div>
+      </div>
+      
+      <label>🔗 RTSP URL (или заполните поля ниже для авто-генерации)</label>
+      <input id="c-rtsp" placeholder="rtsp://admin:pass@192.168.1.100:554/stream1">
+      
+      <div style="background:#0b1220;padding:12px;border-radius:6px;margin:8px 0">
+        <strong style="color:var(--muted);font-size:0.9em">🔧 Авто-генерация RTSP:</strong>
+        <div class="grid-4">
+          <input id="c-ip" placeholder="IP: 192.168.x.x">
+          <input id="c-port" placeholder="Порт" value="554">
+          <input id="c-login" placeholder="Логин" value="admin">
+          <input id="c-pass" placeholder="Пароль" value="admin" type="password">
+        </div>
+        <input id="c-stream" placeholder="Путь: stream1" value="stream1" style="margin-top:8px">
+        <button class="btn gray" onclick="generateRtsp()" style="margin-top:8px;width:100%">🔄 Сгенерировать RTSP</button>
+      </div>
+      
+      <div class="grid-2">
+        <div>
+          <label>📏 Разрешение</label>
+          <select id="c-res">
+            <option value="640">640×420</option>
+            <option value="420">420×280</option>
+            <option value="380">380×250</option>
+            <option value="320">320×210</option>
+          </select>
+        </div>
+        <div>
+          <label>⏱ Интервал детекции (сек)</label>
+          <input id="c-int" type="number" value="10" min="5" max="300">
+        </div>
+      </div>
+      
+      <label>🔍 Промпт для анализа фото</label>
+      <textarea id="c-aprompt" rows="3" placeholder="Кратко опиши что на кадре, если есть опасность укажи об этом.">Кратко одним предложением на русском опиши что на кадре, если есть опасность укажи об этом.</textarea>
+      
+      <label>📝 Промпт для отчёта</label>
+      <textarea id="c-rprompt" rows="3" placeholder="Опиши важные события за указанный период.">Опиши важные события за указанный период.</textarea>
+      
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn success" onclick="saveCamera()" id="save-btn" style="flex:1">💾 Сохранить</button>
+        <button class="btn gray" onclick="cancelEdit()" style="flex:1;display:none" id="cancel-btn">✖️ Отмена</button>
+      </div>
+    </div>
+    
+    <!-- Список камер -->
+    <h3 style="margin:20px 0 12px">📹 Камеры устройства</h3>
+    <div id="cameras-list"></div>
+  </div>
+
+  <script>
+    const API = '';
+    const DEVICE_ID = window.location.pathname.match(/\/device\/(\d+)/)?.[1] || 1;
+    let editingId = null;
+    
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadDeviceInfo();
+      await loadCameras();
+    });
+    
+    async function loadDeviceInfo() {
+      try {
+        const res = await fetch(`${API}/api/orangepi/${DEVICE_ID}`);
+        const pi = await res.json();
+        document.getElementById('device-name').textContent = pi.name || `Device ${DEVICE_ID}`;
+        document.getElementById('device-ip').textContent = pi.ip || '';
+      } catch(e) { console.error('loadDeviceInfo:', e); }
+    }
+    
+    async function loadCameras() {
+      const list = document.getElementById('cameras-list');
+      list.innerHTML = '<p style="text-align:center;color:var(--muted)">Загрузка...</p>';
+      try {
+        const res = await fetch(`${API}/api/orangepi/${DEVICE_ID}`);
+        const pi = await res.json();
+        const cams = pi.cameras || [];
+        if (!cams.length) { list.innerHTML = '<p style="text-align:center;color:var(--muted)">Камер нет. Добавьте первую выше.</p>'; return; }
+        list.innerHTML = cams.map(c => renderCamCard(c)).join('');
+      } catch(e) { list.innerHTML = `<p style="color:var(--danger)">Ошибка: ${e.message}</p>`; }
+    }
+    
+    function renderCamCard(c) {
+      let ip='?', port='?', login='?', stream='?';
+      if (c.rtsp) {
+        const m = c.rtsp.match(/rtsp:\/\/([^:]+):[^@]+@([^:]+):(\d+)\/(.+)/);
+        if (m) { login=m[1]; ip=m[2]; port=m[3]; stream=m[4]; }
+      }
+      return `<div class="cam-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <strong style="font-size:1.1em">${c.name||'Камера'}</strong>
+          <span class="status ${c.enabled?'on':'off'}">${c.enabled?'🟢 Вкл':'🔴 Выкл'}</span>
+        </div>
+        <div style="margin-bottom:12px"><label>📡 RTSP URL</label><code>${c.rtsp||'Не указан'}</code></div>
+        <div class="grid-4" style="margin-bottom:12px;font-size:0.9em">
+          <div><span style="color:var(--muted)">🌐 IP:</span><br>${ip}</div>
+          <div><span style="color:var(--muted)">🔌 Порт:</span><br>${port}</div>
+          <div><span style="color:var(--muted)">👤 Логин:</span><br>${login}</div>
+          <div><span style="color:var(--muted)">🎥 Поток:</span><br>${stream}</div>
+        </div>
+        <div class="grid-2" style="margin-bottom:12px;font-size:0.9em">
+          <div><span style="color:var(--muted)">📏 Разрешение:</span> <span style="color:var(--text)">${c.resolution||c.res||'640'}</span></div>
+          <div><span style="color:var(--muted)">⏱ Интервал:</span> <span style="color:var(--text)">${c.motion_interval||c.interval||10} сек</span></div>
+        </div>
+        <div style="margin-bottom:12px;font-size:0.9em"><span style="color:var(--muted)">🤖 Модель:</span> <span style="color:var(--text)">${c.analysis_model||'qwen2.5vl:3b'}</span></div>
+        <div style="background:#1e293b;padding:12px;border-radius:6px;margin-bottom:12px;font-size:0.9em">
+          <div style="margin-bottom:8px"><span style="color:var(--muted)">🔍 Промпт анализа:</span><br><em>${(c.analysis_prompt||c.prompt||'').slice(0,80)}${(c.analysis_prompt||c.prompt||'').length>80?'...':''}</em></div>
+          <div><span style="color:var(--muted)">📝 Промпт отчёта:</span><br><em>${(c.report_prompt||'').slice(0,80)}${(c.report_prompt||'').length>80?'...':''}</em></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn gray" onclick="testPhoto(${c.id})">📸 Тест</button>
+          <button class="btn" onclick="editCamera(${c.id})">✏️ Ред.</button>
+          <button class="btn red" onclick="delCamera(${c.id})">🗑️</button>
+          <button class="btn gray" onclick="toggleCamera(${c.id}, ${!c.enabled})">${c.enabled?'🔴 Выкл':'🟢 Вкл'}</button>
+        </div>
+      </div>`;
+    }
+    
+    function generateRtsp() {
+      const ip=document.getElementById('c-ip').value.trim();
+      const port=document.getElementById('c-port').value||'554';
+      const login=document.getElementById('c-login').value||'admin';
+      const pass=document.getElementById('c-pass').value||'admin';
+      const stream=document.getElementById('c-stream').value||'stream1';
+      if(ip) {
+        document.getElementById('c-rtsp').value=`rtsp://${login}:${pass}@${ip}:${port}/${stream}`;
+        alert('✅ RTSP сгенерирован');
+      } else alert('⚠️ Введите IP');
+    }
+    
+    // === ИСПРАВЛЕННАЯ ФУНКЦИЯ СОХРАНЕНИЯ ===
+    async function saveCamera() {
+      const name = document.getElementById('c-name').value.trim();
+      if(!name) return alert('❌ Введите название камеры');
+      
+      // Собираем ВСЕ поля формы
+      const data = {
+        name: name,
+        rtsp_url: document.getElementById('c-rtsp').value.trim() || null,
+        resolution: document.getElementById('c-res').value,  // ✅ Разрешение
+        motion_interval: parseInt(document.getElementById('c-int').value) || 10,  // ✅ Интервал
+        analysis_model: document.getElementById('c-model').value,  // ✅ Модель
+        analysis_prompt: document.getElementById('c-aprompt').value.trim(),  // ✅ Промпт анализа
+        report_prompt: document.getElementById('c-rprompt').value.trim(),  // ✅ Промпт отчёта
+        enabled: true
+      };
+      
+      console.log('📤 Отправляем данные:', data);
+      
+      try {
+        let res;
+        if(editingId) {
+          // Обновление существующей камеры
+          res = await fetch(`${API}/api/cameras/${editingId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+          });
+        } else {
+          // Добавление новой камеры
+          res = await fetch(`${API}/api/orangepi/${DEVICE_ID}/cameras`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+          });
+        }
+        
+        if(!res.ok) {
+          const err = await res.json().catch(()=>({}));
+          throw new Error(err.detail || err.message || 'HTTP '+res.status);
+        }
+        
+        alert(editingId ? '✅ Обновлено' : '✅ Камера добавлена');
+        cancelEdit();
+        await loadCameras();
+      } catch(e) {
+        console.error('❌ saveCamera error:', e);
+        alert('❌ Ошибка: ' + e.message);
+      }
+    }
+    
+    // === ИСПРАВЛЕННАЯ ФУНКЦИЯ РЕДАКТИРОВАНИЯ ===
+    async function editCamera(id) {
+      console.log('✏️ editCamera вызвана, id:', id);
+      
+      try {
+        const res = await fetch(`${API}/api/orangepi/${DEVICE_ID}`);
+        const pi = await res.json();
+        const c = pi.cameras?.find(x => x.id === id);
+        
+        if(!c) { alert('❌ Камера не найдена'); return; }
+        
+        console.log('📦 Данные камеры:', c);
+        
+        // Включаем режим редактирования
+        editingId = id;
+        document.getElementById('edit-camera-id').value = id;
+        document.getElementById('form-title').textContent = '✏️ Редактировать камеру';
+        document.getElementById('save-btn').textContent = '💾 Обновить';
+        document.getElementById('cancel-btn').style.display = 'inline-block';
+        document.getElementById('edit-form').scrollIntoView({behavior:'smooth'});
+        
+        // === ЗАПОЛНЯЕМ ВСЕ ПОЛЯ ФОРМЫ ===
+        document.getElementById('c-name').value = c.name || '';
+        document.getElementById('c-rtsp').value = c.rtsp || c.rtsp_url || '';
+        document.getElementById('c-res').value = c.resolution || c.res || '640';  // ✅ Разрешение
+        document.getElementById('c-int').value = c.motion_interval || c.interval || 10;  // ✅ Интервал
+        document.getElementById('c-model').value = c.analysis_model || 'qwen2.5vl:3b';  // ✅ Модель
+        document.getElementById('c-aprompt').value = c.analysis_prompt || c.prompt || '';  // ✅ Промпт анализа
+        document.getElementById('c-rprompt').value = c.report_prompt || '';  // ✅ Промпт отчёта
+        
+        // Парсим RTSP для полей авто-генерации
+        if(c.rtsp) {
+          const m = c.rtsp.match(/rtsp:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
+          if(m) {
+            document.getElementById('c-login').value = m[1];
+            document.getElementById('c-pass').value = m[2];
+            document.getElementById('c-ip').value = m[3];
+            document.getElementById('c-port').value = m[4];
+            document.getElementById('c-stream').value = m[5];
+          }
+        }
+        
+        alert('✏️ Заполните форму и нажмите "💾 Обновить"');
+      } catch(e) {
+        console.error('❌ editCamera error:', e);
+        alert('❌ Ошибка загрузки камеры: ' + e.message);
+      }
+    }
+    
+    function cancelEdit() {
+      editingId = null;
+      document.getElementById('edit-camera-id').value = '';
+      document.getElementById('form-title').textContent = '➕ Добавить камеру';
+      document.getElementById('save-btn').textContent = '💾 Сохранить';
+      document.getElementById('cancel-btn').style.display = 'none';
+      // Очистка формы
+      document.getElementById('c-name').value = '';
+      document.getElementById('c-rtsp').value = '';
+      document.getElementById('c-ip').value = '';
+      document.getElementById('c-login').value = 'admin';
+      document.getElementById('c-pass').value = 'admin';
+      document.getElementById('c-stream').value = 'stream1';
+      document.getElementById('c-res').value = '640';
+      document.getElementById('c-int').value = '10';
+      document.getElementById('c-model').value = 'qwen2.5vl:3b';
+      document.getElementById('c-aprompt').value = 'Кратко одним предложением на русском опиши что на кадре, если есть опасность укажи об этом.';
+      document.getElementById('c-rprompt').value = 'Опиши важные события за указанный период.';
+    }
+    
+    async function delCamera(id) {
+      if(!confirm('Удалить камеру?')) return;
+      try {
+        await fetch(`${API}/api/cameras/${id}`, {method:'DELETE'});
+        await loadCameras();
+      } catch(e) { alert('Ошибка: '+e.message); }
+    }
+    
+    async function testPhoto(id) {
+      try {
+        await fetch(`${API}/api/cameras/${id}/test`, {method:'POST'});
+        alert('✅ Запрос отправлен. Ждите ~30 сек.');
+      } catch(e) { alert('Ошибка: '+e.message); }
+    }
+    
+    async function toggleCamera(id, enabled) {
+      try {
+        await fetch(`${API}/api/cameras/${id}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({enabled: enabled})
+        });
+        await loadCameras();
+      } catch(e) { alert('Ошибка: '+e.message); }
+    }
+  </script>
+</body>
+</html>

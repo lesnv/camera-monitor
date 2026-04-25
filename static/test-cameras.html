@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Тест Камер</title>
+  <style>
+    body { background: #0b1220; color: #f1f5f9; font-family: system-ui; padding: 20px; }
+    .card { background: #1e293b; padding: 16px; border-radius: 8px; margin: 12px 0; }
+    code { background: #0f172a; padding: 4px 8px; border-radius: 4px; color: #60a5fa; }
+  </style>
+</head>
+<body>
+  <h1>🧪 Тест отображения камер</h1>
+  <div id="output"></div>
+  <script>
+    console.log('✅ test-cameras.html загружен');
+    const out = document.getElementById('output');
+    
+    fetch('/api/orangepi/1')
+      .then(r => r.json())
+      .then(data => {
+        console.log('📦 Данные:', data);
+        let html = `<div class="card"><h3>📹 Камеры (${data.cameras?.length || 0})</h3>`;
+        
+        if (data.cameras?.length) {
+          data.cameras.forEach(c => {
+            // Парсим RTSP
+            let ip='?', login='?', port='?', stream='?';
+            if (c.rtsp) {
+              const m = c.rtsp.match(/rtsp:\/\/([^:]+):[^@]+@([^:]+):(\d+)\/(.+)/);
+              if (m) { login=m[1]; ip=m[2]; port=m[3]; stream=m[4]; }
+            }
+            html += `<div style="background:#0f172a;padding:12px;margin:8px 0;border-radius:6px">
+              <strong>${c.name||'Камера'}</strong> ${c.enabled?'🟢':'🔴'}<br>
+              <span style="color:#94a3b8;font-size:0.9em">🌐 ${ip}:${port} | 👤 ${login} | 🎥 ${stream}</span><br>
+              <code style="display:block;margin:8px 0">${c.rtsp||'—'}</code>
+              <span style="font-size:0.85em">📏 ${c.resolution||c.res||'640'} | ⏱ ${c.motion_interval||c.interval||10}с | 🤖 ${c.analysis_model||'?'}</span><br>
+              <div style="margin-top:8px;font-size:0.85em">
+                <span style="color:#94a3b8">🔍 Анализ:</span> <em>${(c.analysis_prompt||c.prompt||'').slice(0,80)}...</em><br>
+                <span style="color:#94a3b8">📝 Отчёт:</span> <em>${(c.report_prompt||'').slice(0,80)}...</em>
+              </div>
+            </div>`;
+          });
+        } else {
+          html += '<p style="color:#94a3b8">Камер нет</p>';
+        }
+        html += '</div>';
+        out.innerHTML = html;
+        console.log('✅ Камеры отрисованы');
+      })
+      .catch(e => {
+        out.innerHTML = `<p style="color:#ef4444">❌ Ошибка: ${e.message}</p>`;
+        console.error('❌ Ошибка:', e);
+      });
+  </script>
+</body>
+</html>

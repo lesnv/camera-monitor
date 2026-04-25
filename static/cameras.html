@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📹 Все камеры</title>
+  <link rel="icon" href=",">
+  <style>
+    :root { --bg:#0b1220; --card:#1e293b; --accent:#3b82f6; --success:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; }
+    body { font-family: system-ui; background: var(--bg); color: var(--text); margin: 0; padding: 16px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #334155; margin-bottom:20px; }
+    .card { background: var(--card); padding:16px; border-radius:8px; margin:12px 0; }
+    .cam-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:16px; }
+    .cam-card { background:#0f172a; padding:16px; border-radius:8px; }
+    .cam-header { display:flex; justify-content:space-between; margin-bottom:12px; }
+    .cam-name { font-weight:600; }
+    .status { padding:2px 10px; border-radius:999px; font-size:0.8em; }
+    .status.on { background:var(--success); color:#000; }
+    .status.off { background:var(--danger); color:#fff; }
+    .cam-rtsp { font-size:0.85em; color:var(--muted); margin:8px 0; word-break:break-all; background:#1e293b; padding:8px; border-radius:4px; }
+    .cam-settings { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.9em; margin:12px 0; }
+    .cam-actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+    .btn { background:var(--accent); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.85em; }
+    .btn:hover { opacity:0.9; }
+    .btn.gray { background:#475569; }
+    .btn.success { background:var(--success); color:#000; }
+    .btn.red { background:var(--danger); }
+    .empty { text-align:center; color:var(--muted); padding:40px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📹 Все камеры системы</h1>
+      <button class="btn gray" onclick="location.href='/'">← Назад</button>
+    </div>
+    <div class="card">
+      <p style="color:var(--muted);margin-bottom:16px">Общий список всех камер. Нажмите "⚙️" для настроек.</p>
+      <div id="cameras-list" class="cam-grid"></div>
+    </div>
+  </div>
+  <script>
+    const API = '';
+    document.addEventListener('DOMContentLoaded', loadAllCameras);
+    
+    async function loadAllCameras() {
+      const list = document.getElementById('cameras-list');
+      if (!list) { console.error('❌ Элемент #cameras-list не найден'); return; }
+      list.innerHTML = '<p class="empty">Загрузка...</p>';
+      try {
+        const res = await fetch(`${API}/api/orangepi`);
+        const devices = await res.json();
+        let allCams = [];
+        for (const d of devices) {
+          try {
+            const r = await fetch(`${API}/api/orangepi/${d.id}`);
+            const pi = await r.json();
+            if (pi.cameras?.length) {
+              allCams = allCams.concat(pi.cameras.map(c => ({...c, device_name:d.name, device_id:d.id, device_ip:d.ip})));
+            }
+          } catch(e) { console.warn('Device '+d.id+':', e); }
+        }
+        if (!allCams.length) { list.innerHTML = '<p class="empty">📭 Камер не найдено</p>'; return; }
+        allCams.sort((a,b) => (b.enabled-a.enabled) || (a.name||'').localeCompare(b.name||''));
+        list.innerHTML = allCams.map(c => {
+          const rtsp = c.rtsp || c.rtsp_url || '—';
+          return `<div class="cam-card">
+            <div class="cam-header">
+              <div><div class="cam-name">${c.name||'Камера'}</div><div style="font-size:0.85em;color:var(--muted)">${c.device_name||'Unknown'}</div></div>
+              <span class="status ${c.enabled?'on':'off'}">${c.enabled?'🟢':'🔴'}</span>
+            </div>
+            <div class="cam-rtsp"><code>${rtsp}</code></div>
+            <div class="cam-settings">
+              <div>📏 <b>${c.resolution||c.res||'640'}</b></div>
+              <div>⏱ <b>${c.motion_interval||c.interval||10}с</b></div>
+            </div>
+            <div class="cam-actions">
+              <button class="btn gray" onclick="testCam(${c.id})">📸 Тест</button>
+              <a href="device/${c.device_id}/cameras.html" class="btn success">⚙️ Настройки</a>
+            </div>
+          </div>`;
+        }).join('');
+      } catch(e) { list.innerHTML = `<p class="empty" style="color:var(--danger)">❌ ${e.message}</p>`; console.error(e); }
+    }
+    async function testCam(id) { try { await fetch(`${API}/api/cameras/${id}/test`, {method:'POST'}); alert('✅ Запрос отправлен'); } catch(e) { alert('Ошибка: '+e.message); } }
+  </script>
+</body>
+</html>

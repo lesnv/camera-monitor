@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camera Monitor v2.0</title>
+  <style>
+    :root { --bg:#0b1220; --card:#1e293b; --accent:#3b82f6; --success:#22c55e; --warn:#f59e0b; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; padding: 16px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #334155; margin-bottom: 16px; }
+    .badge { padding: 4px 12px; border-radius: 999px; font-size: 0.85em; font-weight: 500; }
+    .badge.online { background: var(--success); color: #000; }
+    .badge.offline { background: var(--danger); color: #fff; }
+    .card { background: var(--card); padding: 16px; border-radius: 8px; margin-bottom: 12px; cursor: pointer; transition: transform 0.1s; }
+    .card:hover { transform: translateY(-2px); }
+    .btn { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.95em; }
+    .btn:hover { opacity: 0.9; }
+    .btn.gray { background: #475569; }
+    .btn.red { background: var(--danger); }
+    .hidden { display: none !important; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid #334155; padding-bottom: 8px; }
+    .tab { padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; background: #334155; }
+    .tab.active { background: var(--accent); color: #fff; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    input, select, textarea { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: var(--text); margin-bottom: 8px; }
+    .event-item, .cam-item { background: #0f172a; padding: 12px; border-radius: 6px; margin: 8px 0; }
+    .event-img { max-width: 100%; max-height: 200px; border-radius: 4px; margin-bottom: 8px; }
+    #pi-list, #tab-overview, #tab-cameras, #tab-events, #tab-gallery { min-height: 100px; }
+    .version-tag { font-size: 0.7em; background: #334155; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📹 Camera Monitor <span class="version-tag">v2.0</span></h1>
+      <button class="btn gray" onclick="showList()">🏠 Назад</button>
+    </div>
+
+    <!-- Список устройств -->
+    <div id="view-list">
+      <h2 style="margin-bottom:12px">Устройства</h2>
+      <div id="pi-list"></div>
+    </div>
+
+    <!-- Детали устройства -->
+    <div id="view-detail" class="hidden">
+      <h2 id="detail-title" style="margin-bottom:12px"></h2>
+      
+      <!-- Вкладки -->
+      <div class="tabs">
+        <div class="tab active" data-tab="overview">📊 Обзор</div>
+        <div class="tab" data-tab="cameras">📹 Камеры</div>
+        <div class="tab" data-tab="events">🖼️ События</div>
+        <div class="tab" data-tab="gallery">📁 Галерея</div>
+      </div>
+
+      <!-- Контент вкладок -->
+      <div id="tab-overview" class="tab-content active"></div>
+      <div id="tab-cameras" class="tab-content"></div>
+      <div id="tab-events" class="tab-content"></div>
+      <div id="tab-gallery" class="tab-content"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

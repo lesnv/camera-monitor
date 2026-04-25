@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🖼️ События</title>
+  <link rel="icon" href=",">
+  <style>
+    :root { --bg:#0b1220; --card:#1e293b; --accent:#3b82f6; --success:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; }
+    body { font-family: system-ui; background: var(--bg); color: var(--text); margin: 0; padding: 16px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #334155; margin-bottom:20px; flex-wrap:wrap; gap:8px; }
+    .card { background: var(--card); padding:16px; border-radius:8px; margin:12px 0; }
+    .filters { display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-bottom:16px; }
+    .filter-group { display:flex; flex-direction:column; gap:4px; }
+    .filter-group label { font-size:0.8em; color:var(--muted); }
+    .filter-group input, .filter-group select { padding:8px 12px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:var(--text); min-width:150px; }
+    .btn { background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; }
+    .btn:hover { opacity:0.9; }
+    .btn.gray { background:#475569; }
+    .btn.success { background:var(--success); color:#000; }
+    .events-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:16px; }
+    .event-card { background:#0f172a; border-radius:8px; overflow:hidden; display:flex; flex-direction:column; }
+    .event-img { width:100%; height:180px; object-fit:cover; background:#1e293b; cursor:pointer; transition:opacity 0.2s; }
+    .event-img:hover { opacity:0.9; }
+    .event-body { padding:12px; flex:1; display:flex; flex-direction:column; }
+    .event-time { font-size:0.8em; color:var(--muted); margin-bottom:4px; }
+    .event-desc { font-size:0.95em; margin-bottom:8px; flex:1; }
+    .event-meta { display:flex; justify-content:space-between; align-items:center; font-size:0.85em; color:var(--muted); }
+    .badge { padding:2px 8px; border-radius:4px; font-size:0.75em; }
+    .badge-danger { background:var(--danger); color:#000; }
+    .badge-device { background:#475569; color:#fff; }
+    .pagination { display:flex; justify-content:center; gap:8px; margin:20px 0; }
+    .pagination button { padding:6px 12px; background:#334155; border:none; border-radius:4px; color:var(--text); cursor:pointer; }
+    .pagination button.active { background:var(--accent); }
+    .pagination button:disabled { opacity:0.5; cursor:not-allowed; }
+    .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center; }
+    .modal.active { display:flex; }
+    .modal-content { background:var(--card); padding:20px; border-radius:12px; max-width:90%; max-height:90%; overflow:auto; }
+    .modal-img { max-width:100%; max-height:70vh; border-radius:8px; }
+    .modal-close { position:absolute; top:20px; right:20px; font-size:2em; color:var(--text); cursor:pointer; background:none; border:none; }
+    @media (max-width:768px) { .events-grid { grid-template-columns:1fr; } .filters { flex-direction:column; align-items:stretch; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🖼️ События</h1>
+      <button class="btn gray" onclick="location.href='/'">← Назад</button>
+    </div>
+    
+    <!-- Фильтры -->
+    <div class="card">
+      <div class="filters">
+        <div class="filter-group">
+          <label>📅 Дата</label>
+          <input type="date" id="filter-date">
+        </div>
+        <div class="filter-group">
+          <label>🔌 Устройство</label>
+          <select id="filter-device"><option value="">Все устройства</option></select>
+        </div>
+        <div class="filter-group">
+          <label>📹 Камера</label>
+          <select id="filter-camera"><option value="">Все камеры</option></select>
+        </div>
+        <div class="filter-group">
+          <label>⚠️ Только опасности</label>
+          <input type="checkbox" id="filter-danger" style="width:20px;height:20px;margin:4px 0">
+        <label style="margin-left:12px"><input type="checkbox" id="filter-test"> 🧪 Тест</label>
+        </div>
+        <button class="btn" onclick="loadEvents()">🔍 Применить</button>
+        <button class="btn gray" onclick="resetFilters()">♻️ Сброс</button>
+      </div>
+    </div>
+    
+    <!-- Список событий -->
+    <div id="events-list" class="events-grid"></div>
+    
+    <!-- Пагинация -->
+    <div class="pagination" id="pagination"></div>
+  </div>
+  
+  <!-- Модальное окно для просмотра -->
+  <div class="modal" id="img-modal">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <div class="modal-content">
+      <img class="modal-img" id="modal-img" src="">
+      <div id="modal-desc" style="margin-top:12px;color:var(--muted)"></div>
+      <div id="modal-meta" style="margin-top:8px;font-size:0.9em;color:var(--muted)"></div>
+    </div>
+  </div>
+
+  <script>
+    const API = '';
+    const ITEMS_PER_PAGE = 12;
+    let currentPage = 1;
+    let allEvents = [];
+    
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', async () => {
+      document.getElementById('filter-date').valueAsDate = new Date();
+      await loadDevices();
+      await loadEvents();
+    });
+    
+    // Загрузка списка устройств для фильтра
+    async function loadDevices() {
+      try {
+        const res = await fetch(`${API}/api/orangepi`);
+        const devices = await res.json();
+        const select = document.getElementById('filter-device');
+        devices.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.id;
+          opt.textContent = d.name || `Device ${d.id}`;
+          select.appendChild(opt);
+        });
+        select.onchange = () => loadCamerasForDevice(select.value);
+      } catch(e) { console.error('loadDevices:', e); }
+    }
+    
+    // Загрузка камер для выбранного устройства
+    async function loadCamerasForDevice(deviceId) {
+      const select = document.getElementById('filter-camera');
+      select.innerHTML = '<option value="">Все камеры</option>';
+      if (!deviceId) return;
+      try {
+        const res = await fetch(`${API}/api/orangepi/${deviceId}`);
+        const pi = await res.json();
+        (pi.cameras || []).forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name || `Camera ${c.id}`;
+          select.appendChild(opt);
+        });
+      } catch(e) { console.error('loadCameras:', e); }
+    }
+    
+    // Загрузка событий
+    async function loadEvents(page = 1) {
+      currentPage = page;
+      const list = document.getElementById('events-list');
+      list.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px">Загрузка...</p>';
+      
+      try {
+        // Формируем параметры запроса
+        const params = new URLSearchParams();
+        if (document.getElementById('filter-date').value) params.append('date', document.getElementById('filter-date').value);
+        if (document.getElementById('filter-device').value) params.append('device_id', document.getElementById('filter-device').value);
+        if (document.getElementById('filter-camera').value) params.append('camera_id', document.getElementById('filter-camera').value);
+        if (document.getElementById('filter-danger').checked) params.append('danger', '1');
+        if (document.getElementById('filter-test').checked) params.append('is_test', '1');
+        params.append('page', page);
+        params.append('limit', ITEMS_PER_PAGE);
+        
+        // ⚠️ Замените на ваш реальный эндпоинт, если отличается
+        const res = await fetch(`${API}/api/screenshots?${params}`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const events = data.items || data || [];
+        
+        if (!events.length) {
+          list.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px">📭 Нет событий по выбранным фильтрам</p>';
+          renderPagination(0);
+          return;
+        }
+        
+        allEvents = events;
+        list.innerHTML = events.map(e => renderEventCard(e)).join('');
+        renderPagination(data.total_pages || 1);
+        
+      } catch(e) {
+        list.innerHTML = `<p style="grid-column:1/-1;color:var(--danger);text-align:center;padding:40px">❌ Ошибка: ${e.message}<br><small>Проверьте консоль (F12) и эндпоинт API</small></p>`;
+        console.error('loadEvents:', e);
+      }
+    }
+    
+    // Рендер карточки события
+    function renderEventCard(e) {
+      const time = e.time || e.created_at || e.timestamp;
+      const desc = e.desc || e.description || e.text || 'Нет описания';
+      const danger = e.danger || e.alert || e.is_danger;
+      const imgUrl = e.url || e.image_url || e.path || e.img_url || '';
+      const deviceName = e.device_name || e.pi_name || `Device ${e.device_id || '?'}`;
+      const camName = e.camera_name || e.cam_name || `Cam ${e.camera_id || '?'}`;
+      const dateStr = time ? new Date(time).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      
+      return `<div class="event-card">
+        ${imgUrl ? `<img src="${imgUrl}" class="event-img" onclick="openModal('${imgUrl}', '${desc.replace(/'/g,"\\'")}', '${dateStr}', '${deviceName}', '${camName}')" onerror="this.parentElement.querySelector('.no-img').style.display='flex';this.style.display='none'">
+        <div class="no-img" style="display:none;height:180px;align-items:center;justify-content:center;color:var(--muted);background:#1e293b">🖼️</div>` 
+        : `<div class="event-img" style="display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:default">🖼️</div>`}
+        <div class="event-body">
+          <div class="event-time">🕒 ${dateStr}</div>
+          <div class="event-desc">${desc}</div>
+          <div class="event-meta">
+            <span class="badge badge-device">🔌 ${deviceName}</span>
+            <span>📹 ${camName}</span>
+          </div>
+          ${danger ? `<div style="margin-top:8px"><span class="badge badge-danger">⚠️ Опасность</span></div>` : ''}
+        </div>
+      </div>`;
+    }
+    
+    // Пагинация
+    function renderPagination(totalPages) {
+      const pag = document.getElementById('pagination');
+      if (totalPages <= 1) { pag.innerHTML = ''; return; }
+      let html = '';
+      html += `<button ${currentPage===1?'disabled':''} onclick="loadEvents(${currentPage-1})">← Назад</button>`;
+      for (let i = Math.max(1, currentPage-2); i <= Math.min(totalPages, currentPage+2); i++) {
+        html += `<button class="${i===currentPage?'active':''}" onclick="loadEvents(${i})">${i}</button>`;
+      }
+      html += `<button ${currentPage===totalPages?'disabled':''} onclick="loadEvents(${currentPage+1})">Вперёд →</button>`;
+      pag.innerHTML = html;
+    }
+    
+    // Модальное окно
+    function openModal(img, desc, time, device, cam) {
+      document.getElementById('modal-img').src = img;
+      document.getElementById('modal-desc').textContent = desc;
+      document.getElementById('modal-meta').textContent = `🕒 ${time} | 🔌 ${device} | 📹 ${cam}`;
+      document.getElementById('img-modal').classList.add('active');
+    }
+    function closeModal() { document.getElementById('img-modal').classList.remove('active'); }
+    document.getElementById('img-modal').onclick = (e) => { if (e.target.id === 'img-modal') closeModal(); };
+    document.onkeydown = (e) => { if (e.key === 'Escape') closeModal(); };
+    
+    // Сброс фильтров
+    function resetFilters() {
+      document.getElementById('filter-date').valueAsDate = new Date();
+      document.getElementById('filter-device').value = '';
+      document.getElementById('filter-camera').innerHTML = '<option value="">Все камеры</option>';
+      document.getElementById('filter-danger').checked = false;
+      loadEvents();
+    }
+  </script>
+</body>
+</html>

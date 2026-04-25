@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📹 Camera Monitor — Главная</title>
+  <link rel="icon" href=",">
+  <style>
+    :root { --bg:#0b1220; --card:#1e293b; --accent:#3b82f6; --success:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height:1.6; }
+    .container { max-width:1400px; margin:0 auto; padding:16px; }
+    
+    /* Header */
+    .header { display:flex; justify-content:space-between; align-items:center; padding:16px 0; border-bottom:1px solid var(--border); margin-bottom:24px; flex-wrap:wrap; gap:12px; }
+    .logo { display:flex; align-items:center; gap:12px; }
+    .logo-icon { font-size:1.8em; }
+    .logo-text h1 { font-size:1.4em; font-weight:600; }
+    .logo-text p { font-size:0.85em; color:var(--muted); }
+    .server-time { font-size:0.9em; color:var(--muted); background:var(--card); padding:8px 16px; border-radius:8px; }
+    
+    /* Navigation */
+    .nav { display:flex; gap:8px; margin-bottom:24px; flex-wrap:wrap; }
+    .nav-link { padding:10px 20px; background:var(--card); border-radius:8px; text-decoration:none; color:var(--text); font-weight:500; transition:all 0.2s; border:2px solid transparent; }
+    .nav-link:hover { background:var(--accent); border-color:var(--accent); }
+    .nav-link.active { background:var(--accent); border-color:var(--accent); }
+    .nav-link.danger:hover { background:var(--danger); border-color:var(--danger); }
+    
+    /* Stats Bar */
+    .stats-bar { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:24px; }
+    .stat-card { background:var(--card); padding:16px; border-radius:12px; text-align:center; }
+    .stat-value { font-size:1.8em; font-weight:700; color:var(--accent); }
+    .stat-label { font-size:0.85em; color:var(--muted); margin-top:4px; }
+    .stat-card.success .stat-value { color:var(--success); }
+    .stat-card.danger .stat-value { color:var(--danger); }
+    
+    /* Quick Actions */
+    .quick-actions { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-bottom:24px; }
+    .action-card { background:var(--card); padding:20px; border-radius:12px; text-decoration:none; color:var(--text); display:flex; align-items:center; gap:12px; transition:transform 0.2s, background 0.2s; border:2px solid transparent; }
+    .action-card:hover { transform:translateY(-2px); background:#2a3547; border-color:var(--accent); }
+    .action-icon { font-size:1.5em; }
+    .action-text h3 { font-size:1em; margin-bottom:2px; }
+    .action-text p { font-size:0.8em; color:var(--muted); }
+    
+    /* Devices Grid */
+    .section-title { font-size:1.3em; margin:24px 0 16px; display:flex; align-items:center; gap:8px; }
+    .devices-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px; }
+    .device-card { background:var(--card); border-radius:12px; overflow:hidden; border:1px solid var(--border); transition:border-color 0.2s; }
+    .device-card:hover { border-color:var(--accent); }
+    .device-header { padding:16px; display:flex; justify-content:space-between; align-items:start; border-bottom:1px solid var(--border); }
+    .device-name { font-weight:600; font-size:1.1em; }
+    .device-ip { font-size:0.85em; color:var(--muted); font-family:monospace; }
+    .device-status { padding:4px 12px; border-radius:999px; font-size:0.8em; font-weight:500; }
+    .device-status.online { background:var(--success); color:#000; }
+    .device-status.offline { background:var(--danger); color:#fff; }
+    .device-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; padding:16px; }
+    .device-stat { text-align:center; padding:8px; background:#0f172a; border-radius:8px; }
+    .device-stat-value { font-weight:600; font-size:0.95em; }
+    .device-stat-label { font-size:0.75em; color:var(--muted); display:block; margin-top:2px; }
+    .device-actions { padding:0 16px 16px; display:flex; gap:8px; flex-wrap:wrap; }
+    .btn { flex:1; padding:8px 12px; border:none; border-radius:6px; cursor:pointer; font-size:0.85em; font-weight:500; transition:opacity 0.2s; min-width:80px; }
+    .btn:hover { opacity:0.9; }
+    .btn.gray { background:#475569; color:#fff; }
+    .btn.red { background:var(--danger); color:#fff; }
+    .btn.success { background:var(--success); color:#000; }
+    .btn.primary { background:var(--accent); color:#fff; }
+    
+    /* Empty state */
+    .empty-state { text-align:center; padding:40px; color:var(--muted); background:var(--card); border-radius:12px; }
+    
+    @media (max-width:768px) {
+      .stats-bar { grid-template-columns:repeat(2,1fr); }
+      .device-stats { grid-template-columns:repeat(2,1fr); }
+      .header { flex-direction:column; align-items:flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">
+        <span class="logo-icon">📹</span>
+        <div class="logo-text">
+          <h1>Camera Monitor</h1>
+          <p>Система видеонаблюдения с ИИ-анализом</p>
+        </div>
+      </div>
+      <div class="server-time" id="server-time">—</div>
+    </div>
+    
+    <!-- Navigation -->
+    <nav class="nav">
+      <a href="/" class="nav-link active">🏠 Главная</a>
+      <a href="cameras.html" class="nav-link">📹 Все камеры</a>
+      <a href="events.html" class="nav-link">🖼️ События</a>
+      <a href="gallery.html" class="nav-link">📁 Галерея</a>
+    </nav>
+    
+    <!-- Stats Bar -->
+    <div class="stats-bar">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-devices">—</div>
+        <div class="stat-label">🔌 Устройств</div>
+      </div>
+      <div class="stat-card success">
+        <div class="stat-value" id="stat-online">—</div>
+        <div class="stat-label">🟢 Онлайн</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-cameras">—</div>
+        <div class="stat-label">📹 Камер</div>
+      </div>
+      <div class="stat-card danger">
+        <div class="stat-value" id="stat-alerts">—</div>
+        <div class="stat-label">⚠️ Опасности</div>
+      </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="quick-actions">
+      <a href="cameras.html" class="action-card">
+        <span class="action-icon">⚙️</span>
+        <div class="action-text">
+          <h3>Настройки камер</h3>
+          <p>Добавить или изменить камеру</p>
+        </div>
+      </a>
+      <a href="events.html" class="action-card">
+        <span class="action-icon">🔍</span>
+        <div class="action-text">
+          <h3>Последние события</h3>
+          <p>Просмотр детекций и отчётов</p>
+        </div>
+      </a>
+      <a href="gallery.html" class="action-card">
+        <span class="action-icon">🖼️</span>
+        <div class="action-text">
+          <h3>Галерея</h3>
+          <p>Все сохранённые кадры</p>
+        </div>
+      </a>
+      <a href="#" class="action-card" onclick="refreshAll(); return false;">
+        <span class="action-icon">🔄</span>
+        <div class="action-text">
+          <h3>Обновить</h3>
+          <p>Перезагрузить данные</p>
+        </div>
+      </a>
+    </div>
+    
+    <!-- Devices Section -->
+    <h2 class="section-title">🔌 Подключённые устройства</h2>
+    <div id="devices-list" class="devices-grid"></div>
+  </div>
+
+  <script>
+    const API = '';
+    
+    // Время сервера
+    function updateTime() {
+      document.getElementById('server-time').textContent = new Date().toLocaleString('ru-RU');
+    }
+    setInterval(updateTime, 1000);
+    updateTime();
+    
+    // Загрузка устройств
+    async function loadDevices() {
+      const list = document.getElementById('devices-list');
+      list.innerHTML = '<div class="empty-state">Загрузка устройств...</div>';
+      
+      try {
+        const res = await fetch(`${API}/api/orangepi`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const devices = await res.json();
+        
+        // Обновляем статистику
+        document.getElementById('stat-devices').textContent = devices.length;
+        const online = devices.filter(d => d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 120000).length;
+        document.getElementById('stat-online').textContent = online;
+        
+        if (!devices.length) {
+          list.innerHTML = '<div class="empty-state">📭 Нет подключённых устройств. Подключите Orange Pi к сети.</div>';
+          return;
+        }
+        
+        // Загружаем доп. данные для статистики камер
+        let totalCams = 0, alerts = 0;
+        for (const d of devices) {
+          try {
+            const r = await fetch(`${API}/api/orangepi/${d.id}`);
+            const pi = await r.json();
+            totalCams += (pi.cameras || []).length;
+            alerts += (pi.cameras || []).filter(c => c.last_alert).length;
+          } catch(e) {}
+        }
+        document.getElementById('stat-cameras').textContent = totalCams;
+        document.getElementById('stat-alerts').textContent = alerts;
+        
+        // Рендер карточек устройств
+        list.innerHTML = devices.map(d => {
+          const isOnline = d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 120000;
+          const lastSeen = d.last_seen ? new Date(d.last_seen).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+          const conn = d.conn === 'wifi' ? `📶 ${d.ssid||'WiFi'}` : '🔌 Ethernet';
+          
+          return `<div class="device-card">
+            <div class="device-header">
+              <div>
+                <div class="device-name">${d.name || 'Unknown'}</div>
+                <div class="device-ip">${d.ip || '—'}</div>
+              </div>
+              <span class="device-status ${isOnline?'online':'offline'}">${isOnline?'🟢 Онлайн':'🔴 Офлайн'}</span>
+            </div>
+            <div class="device-stats">
+              <div class="device-stat"><div class="device-stat-value">${d.temp||0}°C</div><span class="device-stat-label">🌡️ Темп.</span></div>
+              <div class="device-stat"><div class="device-stat-value">${d.cpu||0}%</div><span class="device-stat-label">💻 CPU</span></div>
+              <div class="device-stat"><div class="device-stat-value">${d.ram||0}%</div><span class="device-stat-label">🧠 RAM</span></div>
+              <div class="device-stat"><div class="device-stat-value">${d.disk||0}%</div><span class="device-stat-label">💾 Диск</span></div>
+            </div>
+            <div style="padding:0 16px 8px; font-size:0.85em; color:var(--muted)">
+              ${conn} • Последний пульс: ${lastSeen}
+            </div>
+            <div class="device-actions">
+              <button class="btn gray" onclick="pingDevice(${d.id})">🔍 Ping</button>
+              <button class="btn gray" onclick="syncTime(${d.id})">⏰ Sync</button>
+              <button class="btn red" onclick="rebootDevice(${d.id})">🔄 Reboot</button>
+              <a href="device/${d.id}/cameras.html" class="btn success">⚙️ Камеры</a>
+            </div>
+          </div>`;
+        }).join('');
+        
+      } catch(e) {
+        list.innerHTML = `<div class="empty-state" style="color:var(--danger)">❌ Ошибка загрузки: ${e.message}</div>`;
+        console.error('loadDevices:', e);
+      }
+    }
+    
+    // Действия с устройством
+    async function pingDevice(id) {
+      try {
+        const res = await fetch(`${API}/api/orangepi/${id}/ping`, {method:'POST'});
+        const data = await res.json();
+        alert(`Ping: ${data.status==='online'?'✅ Онлайн':'❌ '+data.message}`);
+      } catch(e) { alert('Ошибка: '+e.message); }
+    }
+    async function syncTime(id) {
+      try {
+        await fetch(`${API}/api/orangepi/${id}/sync-time`, {method:'POST'});
+        alert('✅ Синхронизация времени отправлена');
+      } catch(e) { alert('Ошибка: '+e.message); }
+    }
+    async function rebootDevice(id) {
+      if (!confirm('Перезагрузить устройство?')) return;
+      try {
+        await fetch(`${API}/api/orangepi/${id}/reboot`, {method:'POST'});
+        alert('✅ Команда перезагрузки отправлена');
+      } catch(e) { alert('Ошибка: '+e.message); }
+    }
+    
+    // Обновление всех данных
+    function refreshAll() {
+      loadDevices();
+    }
+    
+    // Авто-обновление каждые 30 сек
+    document.addEventListener('DOMContentLoaded', () => {
+      loadDevices();
+      setInterval(loadDevices, 30000);
+    });
+  </script>
+</body>
+</html>

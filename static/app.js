@@ -1,0 +1,168 @@
+const API = '';
+let currentPi = null;
+
+document.addEventListener('DOMContentLoaded', () => { loadPiList(); initTabs(); });
+
+function initTabs() {
+  document.querySelectorAll('#view-detail .tab').forEach(tab => {
+    // Пропускаем вкладку "Камеры" - она теперь отдельная страница
+    
+    if (tab.dataset.tab === "cameras") { tab.onclick = null; return; }
+    tab.onclick = () => {
+      document.querySelectorAll('#view-detail .tab, #view-detail .tab-content').forEach(x => x.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      if(tab.dataset.tab === 'events' && currentPi) loadEvents(currentPi.id);
+      if(tab.dataset.tab === 'gallery' && currentPi) loadGallery(currentPi.id);
+    };
+  });
+}
+
+async function loadPiList() {
+  document.getElementById('view-list').classList.remove('hidden');
+  document.getElementById('view-detail').classList.add('hidden');
+  const list = document.getElementById('pi-list');
+  list.innerHTML = '<p class="card">Загрузка...</p>';
+  try {
+    const res = await fetch(`${API}/api/orangepi`);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const pis = await res.json();
+    if(!pis?.length) { list.innerHTML = '<p class="card">Нет устройств</p>'; return; }
+    list.innerHTML = pis.map(p => {
+      const last = new Date(p.last_seen), isOn = (new Date()-last)<120000;
+      return `<div class="card" onclick="openPi(${p.id})"><div style="display:flex;justify-content:space-between"><h3>${p.name}</h3><span class="badge ${isOn?'online':'offline'}">${isOn?'🟢':'🔴'}</span></div><p style="font-size:0.85em;color:#94a3b8">🌐 ${p.ip||'—'} | 🌡️ ${p.temp||'—'}°C</p><p style="font-size:0.85em">CPU: ${p.cpu||0}% | RAM: ${p.ram||0}%</p></div>`;
+    }).join('');
+  } catch(e) { list.innerHTML = '<p class="card" style="color:var(--danger)">Ошибка: '+e.message+'</p>'; }
+}
+
+async function openPi(id) {
+  currentPi = null;
+  document.getElementById('view-list').classList.add('hidden');
+  document.getElementById('view-detail').classList.remove('hidden');
+  document.querySelectorAll('#view-detail .tab, #view-detail .tab-content').forEach(x => x.classList.remove('active'));
+  document.querySelector('#view-detail .tab[data-tab="overview"]').classList.add('active');
+  document.getElementById('tab-overview').classList.add('active');
+  try {
+    const res = await fetch(`${API}/api/orangepi/${id}`);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    currentPi = await res.json();
+    document.getElementById('detail-title').textContent = currentPi.name;
+    renderOverview(currentPi); renderNetwork(currentPi); renderCameras(currentPi);
+  } catch(e) { document.getElementById('detail-title').textContent = 'Ошибка: '+e.message; }
+}
+
+function renderOverview(pi) {
+  const last = new Date(pi.last_seen), isOn = (new Date()-last)<120000;
+  // Получаем время с сервера для отображения
+  const serverTime = new Date().toLocaleString('ru-RU');
+  document.getElementById('tab-overview').innerHTML = 
+    `<div class="card"><h3>📊 Сводка</h3>
+    <p>IP: ${pi.ip||'—'} | 🌡️ ${pi.temp||'—'}°C | ${pi.conn==='wifi'?'📶 Wi-Fi':'🔌 Ethernet'}</p>
+    <p>Последний пульс: ${last.toLocaleString('ru-RU')} <span class="badge ${isOn?'online':'offline'}" style="margin-left:8px">${isOn?'🟢':'🔴'}</span></p>
+    <div style="background:#0f172a;padding:12px;border-radius:6px;margin:12px 0">
+      <p style="margin-bottom:8px"><strong>⏰ Время на Orange Pi</strong></p>
+      <p style="color:#94a3b8;font-size:0.9em;margin-bottom:8px">Сервер: ${serverTime}<br><small style="color:#64748b">Время устройства обновляется при пульсе</small></p>
+      <button class="btn" onclick="syncTime(${pi.id})">🔄 Синхронизировать время</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" onclick="checkStatus(${pi.id})">🔍 Ping</button>
+      <button class="btn gray" onclick="rebootPi(${pi.id})">🔄 Перезагрузить</button>
+    </div><div id="status-result" style="margin-top:8px;color:#94a3b8"></div></div>`;
+}
+
+async function syncTime(piId) {
+  const el = document.getElementById('status-result');
+  el.textContent = 'Отправка команды...';
+  try {
+    await fetch(`${API}/api/orangepi/${piId}/sync-time`, {method:'POST'});
+    el.textContent = '✅ Команда отправлена. Время синхронизируется при следующем пульсе.';
+  } catch(e) { el.textContent = '❌ Ошибка: '+e.message; }
+}
+
+async function checkStatus(piId) {
+  const el = document.getElementById('status-result'); el.textContent = 'Проверка...';
+  try {
+    const res = await fetch(`${API}/api/orangepi/${piId}/ping`, {method:'POST'});
+    const data = await res.json();
+    el.textContent = data.status==='online' ? '✅ Онлайн' : '❌ '+data.message;
+  } catch(e) { el.textContent = 'Ошибка: '+e.message; }
+}
+async function rebootPi(piId) { if(confirm('Перезагрузить?')) { await fetch(`${API}/api/orangepi/${piId}/reboot`, {method:'POST'}); alert('Команда отправлена'); } }
+
+function renderNetwork(pi) {
+  document.getElementById('tab-network').innerHTML = `<div class="card"><h3>📶 Сеть</h3><p>Тип: ${pi.conn==='wifi'?'📶 Wi-Fi':'🔌 Ethernet'}</p><p>SSID: ${pi.ssid||'—'}</p><p>IP: ${pi.ip||'—'}</p><button class="btn" onclick="scanWifi(${pi.id})" style="margin-top:8px">🔍 Сканировать</button><div id="wifi-list" style="margin-top:8px;color:#94a3b8"></div></div>`;
+}
+async function scanWifi(piId) { const el=document.getElementById('wifi-list'); el.textContent='Запрос...'; await fetch(`${API}/api/orangepi/${piId}/wifi-scan`,{method:'POST'}); el.innerHTML='<small>Результат после следующего пульса (~30 сек)</small>'; }
+
+  let html = `<div class="card"><h3>📹 Камеры (${cams.length}/4)</h3>`;
+  if(cams.length<4) {
+    html += `<div style="background:#0f172a;padding:12px;border-radius:6px;margin:8px 0">
+      <input id="cam-name" placeholder="Название*" style="width:100%;padding:8px;margin-bottom:8px">
+      <input id="cam-rtsp" placeholder="RTSP URL" style="width:100%;padding:8px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <select id="cam-res" style="flex:1;padding:8px"><option value="640">640×420</option><option value="420">420×280</option></select>
+        <input id="cam-int" type="number" value="10" placeholder="Сек" style="flex:1;padding:8px">
+      </div>
+      <select id="cam-model" style="width:100%;padding:8px;margin-bottom:8px"><option value="qwen2.5vl:3b" selected>qwen2.5vl:3b</option><option value="llava:7b">llava:7b</option></select>
+      <button class="btn" onclick="addCamera(${pi.id})" style="width:100%">Добавить</button></div><hr style="border-color:#334155">`;
+  }
+  html += cams.length ? cams.map(c => `
+    <div style="background:#0f172a;padding:12px;margin:8px 0;border-radius:6px">
+      <div style="display:flex;justify-content:space-between"><strong>${c.name}</strong><span>${c.enabled?'🟢':'🔴'}</span></div>
+      <small style="color:#94a3b8">${c.rtsp||'Локальная'} | 🤖 ${c.analysis_model||'qwen2.5vl:3b'}</small><br>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn gray" onclick="testPhoto(${c.id})" style="flex:1">📸 Тест</button>
+        <button class="btn gray" onclick="editCamera(${c.id})" style="flex:2">✏️ Ред.</button>
+        <button class="btn red" onclick="delCamera(${c.id})" style="flex:1">🗑️</button>
+      </div>
+    </div>`).join('') : '<p style="color:#94a3b8">Камер нет</p>';
+  html += '</div>'; document.getElementById('tab-cameras').innerHTML = html;
+}
+
+  const data = { name, rtsp_url: document.getElementById('cam-rtsp').value.trim()||null, resolution: document.getElementById('cam-res').value, motion_interval: +document.getElementById('cam-int').value||10, analysis_model: document.getElementById('cam-model').value, enabled: true };
+  try { const res = await fetch(`${API}/api/orangepi/${piId}/cameras`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}); if(!res.ok) throw new Error((await res.json()).detail||'Ошибка'); alert('✅ Добавлена'); openPi(piId); } catch(e) { alert('❌ '+e.message); }
+}
+  const name = prompt('Название:', c.name); if(!name) return;
+  const rtsp = prompt('RTSP URL:', c.rtsp||'');
+  const res = prompt('Разрешение (640/420):', c.res||'640');
+  const interval = prompt('Интервал (сек):', c.interval||10);
+  const model = prompt('Модель анализа:', c.analysis_model||'qwen2.5vl:3b');
+  const prompt_text = prompt('Промпт:', c.prompt||'');
+  if(name && res && interval) {
+    try {
+      await fetch(`${API}/api/cameras/${camId}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, rtsp_url:rtsp||null, resolution:res, motion_interval:+interval, analysis_model:model, analysis_prompt:prompt_text})});
+      alert('✅ Обновлено'); openPi(currentPi.id);
+    } catch(e) { alert('❌ '+e.message); }
+  }
+}
+
+async function loadEvents(piId) {
+  const el = document.getElementById('tab-events'); el.innerHTML = '<p style="text-align:center;padding:40px;color:#94a3b8">Загрузка...</p>';
+  try {
+    const res = await fetch(`${API}/api/screenshots/pi/${piId}`); if(!res.ok) throw new Error('HTTP '+res.status);
+    const items = await res.json();
+    if(!items?.length) { el.innerHTML = '<p style="text-align:center;padding:40px;color:#94a3b8">Нет событий</p>'; return; }
+    el.innerHTML = items.map(s => `<div style="background:#0f172a;padding:12px;margin:8px 0;border-radius:6px">${s.url?'<img src="'+s.url+'" style="max-width:100%;max-height:200px;border-radius:4px;margin-bottom:8px" onerror="this.style.display=\'none\'">':''}<div style="font-size:0.85em;color:#94a3b8">${new Date(s.time).toLocaleString('ru-RU')}</div><div style="margin-top:4px">${s.desc||'<em style="color:#64748b">Нет описания</em>'}</div>${s.danger?'<span style="display:inline-block;margin-top:4px;background:var(--danger);color:#000;padding:2px 8px;border-radius:4px;font-size:0.85em">⚠️</span>':''}</div>`).join('');
+  } catch(e) { el.innerHTML = '<p style="color:var(--danger)">Ошибка: '+e.message+'</p>'; }
+}
+
+async function loadGallery(piId) {
+  const el = document.getElementById('tab-gallery'); el.innerHTML = '<p style="text-align:center;padding:40px;color:#94a3b8">Загрузка...</p>';
+  try {
+    const res = await fetch(`${API}/api/orangepi/${piId}/folders`); if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    if(!data?.folders?.length) { el.innerHTML = '<p style="text-align:center;padding:40px;color:#94a3b8">Нет фотографий в галерее</p>'; return; }
+    let html = '<div class="card" style="padding:12px"><h3>📁 Галерея</h3>';
+    data.folders.forEach(f => {
+      html += `<h4 style="margin:16px 0 12px;color:#94a3b8">📅 ${f.date}</h4>`;
+      f.cameras.forEach(c => {
+        html += `<div style="margin:12px 0;padding:12px;background:#0f172a;border-radius:6px"><p style="margin-bottom:8px"><strong>Камера ${c.camera_id}</strong> <span style="color:#94a3b8">(${c.count} фото)</span></p><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">`;
+        c.files.slice(0,12).forEach(fn => { const url = `/uploads/pi_${piId}/${f.date}/camera_${c.camera_id}/${fn}`; html += `<a href="${url}" target="_blank"><img src="${url}" style="width:100%;height:90px;object-fit:cover;border-radius:4px" loading="lazy"></a>`; });
+        html += '</div></div>';
+      });
+    });
+    el.innerHTML = html + '</div>';
+  } catch(e) { el.innerHTML = '<p style="color:var(--danger)">Ошибка: '+e.message+'</p>'; }
+}
+
+function showList() { loadPiList(); }

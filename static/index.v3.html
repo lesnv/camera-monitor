@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <link rel="icon" href="data:,">
+  <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camera Monitor v3.0</title>
+  <style>
+    :root { --bg:#0b1220; --card:#1e293b; --accent:#3b82f6; --success:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 16px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #334155; margin-bottom: 16px; }
+    .badge { padding: 4px 12px; border-radius: 999px; font-size: 0.85em; }
+    .badge.online { background: var(--success); color: #000; }
+    .badge.offline { background: var(--danger); color: #fff; }
+    .card { background: var(--card); padding: 16px; border-radius: 8px; margin-bottom: 12px; cursor: pointer; }
+    .btn { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+    .btn.gray { background: #475569; }
+    .hidden { display: none !important; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tab { padding: 8px 16px; background: #334155; border-radius: 6px 6px 0 0; cursor: pointer; }
+    .tab.active { background: var(--accent); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📹 Camera Monitor <span style="background:#334155;padding:2px 8px;border-radius:4px;font-size:0.7em;margin-left:8px">v3.0</span></h1>
+      <button class="btn gray" onclick="showList()">🏠 Назад</button>
+    </div>
+    <div id="view-list">
+      <h2>Устройства</h2>
+      <div id="pi-list"></div>
+    </div>
+    <div id="view-detail" class="hidden">
+      <h2 id="detail-title"></h2>
+      <div class="tabs">
+        <div class="tab active" data-tab="overview">📊 Обзор</div>
+        <div class="tab" data-tab="cameras">📹 Камеры</div>
+        <div class="tab" data-tab="events">🖼️ События</div>
+        <div class="tab" data-tab="gallery">📁 Галерея</div>
+      </div>
+      <div id="tab-overview" class="tab-content active"></div>
+      <div id="tab-cameras" class="tab-content"></div>
+      <div id="tab-events" class="tab-content"></div>
+      <div id="tab-gallery" class="tab-content"></div>
+    </div>
+  </div>
+  <script src="app.v3.js"></script>
+</body>
+</html>

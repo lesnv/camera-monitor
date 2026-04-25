@@ -1,0 +1,336 @@
+import os, asyncio, logging, secrets, base64, subprocess, json
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional, List, Dict
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, Header
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship, Session
+from sqlalchemy.sql import func
+from PIL import Image
+import requests
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+DATA_DIR = Path("/app/data")
+UPLOAD_DIR = Path("/app/uploads")
+DB_PATH = DATA_DIR / "camera.db"
+OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://192.168.31.127:9874")
+API_KEYS = {"dev-key-123"}
+DEFAULT_PROMPT = "Кратко одним предложением на русском опиши что на кадре, если есть опасность укажи об этом."
+RESOLUTIONS = {"640": (640, 420), "420": (420, 280), "380": (380, 250)}
+MAX_CAMERAS_PER_PI = 4
+COMMAND_QUEUE = {}
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+Base = declarative_base()
+
+class OrangePi(Base):
+    __tablename__ = "orange_pis"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    api_key = Column(String, unique=True, nullable=False, default=lambda: secrets.token_urlsafe(16))
+    ip = Column(String, nullable=True)
+    enabled = Column(Boolean, default=True)
+    last_seen = Column(DateTime(timezone=True), server_default=func.now())
+    cpu_load = Column(Float, default=0.0)
+    ram_usage = Column(Float, default=0.0)
+    storage_usage = Column(Float, default=0.0)
+    connection_type = Column(String, default="unknown")
+    wifi_ssid = Column(String, nullable=True)
+    temp_celsius = Column(Float, default=0.0)
+    cameras = relationship("Camera", back_populates="device", cascade="all, delete-orphan")
+
+class Camera(Base):
+    __tablename__ = "cameras"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    orange_pi_id = Column(Integer, ForeignKey("orange_pis.id"), nullable=False)
+    rtsp_url = Column(String, nullable=True)
+    motion_interval = Column(Integer, default=10)
+    resolution = Column(String, default="640")
+    analysis_prompt = Column(Text, default=DEFAULT_PROMPT)
+    report_prompt = Column(Text, default="Опиши важные события за указанный период.")
+    analysis_model = Column(String, default="qwen2.5vl:3b")
+    report_model = Column(String, default="qwen2.5vl:3b")
+    enabled = Column(Boolean, default=True)
+    device = relationship("OrangePi", back_populates="cameras")
+    screenshots = relationship("Screenshot", back_populates="camera", cascade="all, delete-orphan")
+
+class Screenshot(Base):
+    __tablename__ = "screenshots"
+    id = Column(Integer, primary_key=True, index=True)
+    camera_id = Column(Integer, ForeignKey("cameras.id"), nullable=False)
+    filename = Column(String, nullable=False)
+    original_path = Column(String, nullable=False)
+    resized_path = Column(String, nullable=True)
+    ollama_response = Column(Text, nullable=True)
+    is_danger = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    camera = relationship("Camera", back_populates="screenshots")
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try: yield db
+    finally: db.close()
+
+def resize_image(input_path: Path, output_path: Path, res_key: str):
+    target = RESOLUTIONS.get(res_key, (640, 420))
+    with Image.open(input_path) as img:
+        if img.mode in ("RGBA", "P"): img = img.convert("RGB")
+        img.thumbnail(target, Image.Resampling.LANCZOS)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(output_path, quality=85, format="JPEG")
+
+async def call_ollama(image_path: Path, prompt: str, model: str = "qwen2.5vl:3b") -> str:
+    try:
+        with open(image_path, "rb") as f: img_b64 = base64.b64encode(f.read()).decode()
+        payload = {"model": model, "prompt": prompt, "image": f"image/jpeg;base64,{img_b64}", "max_tokens": 200}
+        resp = requests.post(f"{OLLAMA_URL}/api/query", json=payload, timeout=120)
+        resp.raise_for_status()
+        res = resp.json()
+        return res.get("response", "").strip() if res.get("success") else "[Ошибка VLM]"
+    except Exception as e:
+        logger.error(f"Ollama error: {e}")
+        return "[Ошибка анализа]"
+
+async def process_screenshot(camera_id: int, file_path: Path, resolution: str, prompt: str, model: str, db: Session):
+    try:
+        r_name = f"resized_{Path(file_path).name}"
+        r_path = UPLOAD_DIR / "resized" / r_name
+        resize_image(file_path, r_path, resolution)
+        desc = await call_ollama(r_path, prompt, model)
+        danger = any(k in desc.lower() for k in ["опас", "danger", "пожар", "взлом"])
+        db.add(Screenshot(camera_id=camera_id, filename=Path(file_path).name, original_path=str(file_path), resized_path=str(r_path), ollama_response=desc, is_danger=danger))
+        db.commit()
+        logger.info(f"Скрин камеры {camera_id}: {desc[:50]}...")
+    except Exception as e:
+        logger.error(f"Ошибка обработки: {e}")
+        db.rollback()
+    finally:
+        if file_path.exists(): file_path.unlink()
+
+def get_camera_storage_path(camera_id: int, pi_id: int) -> Path:
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    path = UPLOAD_DIR / f"pi_{pi_id}" / f"camera_{camera_id}" / today
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+def cleanup_old_folders(days: int = 14):
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    if not UPLOAD_DIR.exists(): return
+    for pi_folder in UPLOAD_DIR.iterdir():
+        if pi_folder.is_dir() and pi_folder.name.startswith("pi_"):
+            for day_folder in pi_folder.iterdir():
+                if day_folder.is_dir():
+                    try:
+                        folder_date = datetime.strptime(day_folder.name, "%Y-%m-%d")
+                        if folder_date < cutoff:
+                            import shutil; shutil.rmtree(day_folder)
+                            logger.info(f"Deleted old: {day_folder}")
+                    except: pass
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    sched = AsyncIOScheduler(timezone="Europe/Moscow")
+    sched.add_job(cleanup_old_folders, "interval", days=1, args=[14])
+    sched.start()
+    app.state.sched = sched
+    logger.info("Сервер запущен")
+    yield
+    sched.shutdown()
+    logger.info("Сервер остановлен")
+
+app = FastAPI(title="Camera Monitor", lifespan=lifespan)
+
+async def verify_key(x_api_key: str = Header(None)):
+    if x_api_key not in API_KEYS: raise HTTPException(401, "Invalid API key")
+    return x_api_key
+
+@app.post("/api/orangepi/heartbeat")
+async def heartbeat(device_name: str = Form(...), ip: Optional[str] = Form(None), api_key: Optional[str] = Form(None),
+                    cpu_load: float = Form(0.0), ram_usage: float = Form(0.0), storage_usage: float = Form(0.0),
+                    connection_type: str = Form("unknown"), wifi_ssid: str = Form(None), temp_celsius: float = Form(0.0), db: Session = Depends(get_db)):
+    dev = db.query(OrangePi).filter(OrangePi.name == device_name).first()
+    now = datetime.utcnow()
+    if not dev:
+        dev = OrangePi(name=device_name, ip=ip, api_key=secrets.token_urlsafe(16), enabled=True, last_seen=now,
+                       cpu_load=cpu_load, ram_usage=ram_usage, storage_usage=storage_usage,
+                       connection_type=connection_type, wifi_ssid=wifi_ssid, temp_celsius=temp_celsius)
+        db.add(dev); db.commit(); db.refresh(dev)
+        return {"id": dev.id, "api_key": dev.api_key, "status": "registered", "commands": []}
+    
+    dev.ip = ip or dev.ip; dev.last_seen = now; dev.enabled = True
+    dev.cpu_load = cpu_load; dev.ram_usage = ram_usage; dev.storage_usage = storage_usage
+    dev.connection_type = connection_type; dev.wifi_ssid = wifi_ssid; dev.temp_celsius = temp_celsius
+    db.commit()
+    
+    commands = COMMAND_QUEUE.get(dev.id, [])
+    if commands: COMMAND_QUEUE[dev.id] = []
+    return {"id": dev.id, "api_key": dev.api_key, "status": "updated", "commands": commands}
+
+@app.get("/api/orangepi")
+async def list_pis(db: Session = Depends(get_db)):
+    return [{"id": d.id, "name": d.name, "ip": d.ip, "enabled": d.enabled, "last_seen": d.last_seen,
+             "cpu": round(d.cpu_load or 0,1), "ram": round(d.ram_usage or 0,1), "disk": round(d.storage_usage or 0,1),
+             "conn": d.connection_type, "ssid": d.wifi_ssid or "—", "temp": round(d.temp_celsius or 0, 1)} for d in db.query(OrangePi).all()]
+
+@app.get("/api/orangepi/{pi_id}")
+async def get_pi_detail(pi_id: int, db: Session = Depends(get_db)):
+    pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
+    if not pi: raise HTTPException(404, "Not found")
+    cams = [{"id": c.id, "name": c.name, "rtsp": c.rtsp_url, "interval": c.motion_interval, "res": c.resolution, 
+             "enabled": c.enabled, "prompt": c.analysis_prompt, "report_prompt": c.report_prompt, 
+             "analysis_model": c.analysis_model, "report_model": c.report_model} for c in pi.cameras]
+    return {"id": pi.id, "name": pi.name, "ip": pi.ip, "conn": pi.connection_type, "ssid": pi.wifi_ssid, 
+            "temp": round(pi.temp_celsius or 0, 1), "cameras": cams}
+
+@app.post("/api/orangepi/{pi_id}/reboot")
+async def reboot_pi(pi_id: int, db: Session = Depends(get_db)):
+    return {"status": "command_sent", "message": f"Reboot requested for Pi {pi_id}"}
+
+@app.post("/api/orangepi/{pi_id}/ping")
+async def ping_orangepi(pi_id: int, db: Session = Depends(get_db)):
+    pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
+    if not pi: return {"status": "unknown", "message": "Устройство не найдено"}
+    last_seen = datetime.utcnow() - pi.last_seen.replace(tzinfo=None) if pi.last_seen.tzinfo else datetime.utcnow() - pi.last_seen
+    if last_seen.total_seconds() < 120:
+        return {"status": "online", "method": "heartbeat", "last_seen": pi.last_seen.isoformat(), "message": "Активен по пульсу"}
+    if not pi.ip: return {"status": "unknown", "message": "IP не указан"}
+    try:
+        result = subprocess.run(["ping", "-c", "3", "-W", "2", pi.ip], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            rtt_line = [l for l in result.stdout.split("\n") if "rtt" in l.lower() or "min/avg/max" in l]
+            rtt = rtt_line[0].split("=")[1].strip() if rtt_line else "N/A"
+            return {"status": "online", "method": "ping", "ip": pi.ip, "rtt": rtt}
+        return {"status": "offline", "ip": pi.ip, "message": "Не отвечает на ping"}
+    except Exception as e: return {"status": "error", "message": str(e)}
+
+@app.post("/api/orangepi/{pi_id}/wifi-scan")
+async def wifi_scan(pi_id: int, db: Session = Depends(get_db)):
+    return {"status": "scan_requested", "device_id": pi_id}
+
+@app.post("/api/orangepi/{pi_id}/wifi-connect")
+async def wifi_connect(pi_id: int, ssid: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    return {"status": "config_sent", "ssid": ssid}
+
+@app.put("/api/orangepi/{pi_id}/name")
+async def update_pi_name(pi_id: int, data: dict, db: Session = Depends(get_db)):
+    pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
+    if not pi: raise HTTPException(404, "Not found")
+    pi.name = data.get("name", pi.name); db.commit()
+    return {"status": "updated", "name": pi.name}
+
+@app.post("/api/orangepi/{pi_id}/cameras")
+async def add_camera(pi_id: int, data: dict, db: Session = Depends(get_db)):
+    pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
+    if not pi: raise HTTPException(404, "Pi not found")
+    if len(pi.cameras) >= MAX_CAMERAS_PER_PI: raise HTTPException(400, f"Максимум {MAX_CAMERAS_PER_PI} камер")
+    cam_data = {"orange_pi_id": pi_id, "name": data.get("name"), "rtsp_url": data.get("rtsp_url"),
+                "motion_interval": data.get("motion_interval", 10), "resolution": data.get("resolution", "640"),
+                "analysis_prompt": data.get("analysis_prompt", DEFAULT_PROMPT),
+                "report_prompt": data.get("report_prompt", "Опиши важные события за указанный период."),
+                "analysis_model": data.get("analysis_model", "qwen2.5vl:3b"),
+                "report_model": data.get("report_model", "qwen2.5vl:3b"), "enabled": data.get("enabled", True)}
+    cam = Camera(**cam_data); db.add(cam); db.commit(); db.refresh(cam)
+    return {"id": cam.id, "status": "created"}
+
+@app.put("/api/cameras/{cam_id}")
+async def update_camera(cam_id: int, data: dict, db: Session = Depends(get_db)):
+    cam = db.query(Camera).filter(Camera.id == cam_id).first()
+    if not cam: raise HTTPException(404, "Not found")
+    allowed = ["name", "rtsp_url", "motion_interval", "resolution", "analysis_prompt", "report_prompt", "analysis_model", "report_model", "enabled"]
+    for k, v in data.items():
+        if k in allowed: setattr(cam, k, v)
+    db.commit(); return {"status": "updated"}
+
+@app.delete("/api/cameras/{cam_id}")
+async def delete_camera(cam_id: int, db: Session = Depends(get_db)):
+    cam = db.query(Camera).filter(Camera.id == cam_id).first()
+    if not cam: raise HTTPException(404, "Not found")
+    db.delete(cam); db.commit(); return {"status": "deleted"}
+
+@app.post("/api/cameras/{cam_id}/test")
+async def test_camera_photo(cam_id: int, db: Session = Depends(get_db)):
+    cam = db.query(Camera).filter(Camera.id == cam_id).first()
+    if not cam: raise HTTPException(404, "Camera not found")
+    if cam.orange_pi_id not in COMMAND_QUEUE: COMMAND_QUEUE[cam.orange_pi_id] = []
+    COMMAND_QUEUE[cam.orange_pi_id].append({"action": "test_photo", "camera_id": cam_id})
+    return {"status": "queued", "message": "Command sent"}
+
+@app.post("/api/upload/{camera_id}")
+async def upload(camera_id: int, file: UploadFile = File(...), api_key: str = Header(None), 
+                 is_test: str = Form("false"), db: Session = Depends(get_db)):
+    cam = db.query(Camera).filter(Camera.id == camera_id, Camera.enabled).first()
+    if not cam: raise HTTPException(404, "Camera disabled/not found")
+    pi = db.query(OrangePi).filter(OrangePi.id == cam.orange_pi_id).first()
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S"); fn = f"cam{camera_id}_{ts}_{secrets.token_hex(4)}.jpg"
+    storage_path = get_camera_storage_path(camera_id, cam.orange_pi_id) if pi else UPLOAD_DIR / "original"
+    storage_path.mkdir(parents=True, exist_ok=True)
+    save_path = storage_path / fn
+    with open(save_path, "wb") as f: f.write(await file.read())
+    asyncio.create_task(process_screenshot(camera_id, save_path, cam.resolution, cam.analysis_prompt or DEFAULT_PROMPT, cam.analysis_model or "qwen2.5vl:3b", db))
+    return {"status": "queued", "filename": fn, "path": str(save_path)}
+
+@app.get("/api/screenshots/pi/{pi_id}")
+async def get_screenshots_pi(pi_id: int, limit: int = 50, db: Session = Depends(get_db)):
+    cam_ids = [c.id for c in db.query(Camera).filter(Camera.orange_pi_id == pi_id).all()]
+    if not cam_ids: return []
+    items = db.query(Screenshot).filter(Screenshot.camera_id.in_(cam_ids)).order_by(Screenshot.created_at.desc()).limit(limit).all()
+    return [{"id": s.id, "cam_id": s.camera_id, "url": f"/uploads/resized/resized_{s.filename}" if s.resized_path else None,
+             "desc": s.ollama_response, "danger": s.is_danger, "time": s.created_at} for s in items]
+
+
+@app.post("/api/orangepi/{pi_id}/sync-time")
+async def sync_orangepi_time(pi_id: int, db: Session = Depends(get_db)):
+    """Отправляет команду на синхронизацию времени с сервером"""
+    pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
+    if not pi: raise HTTPException(404, "Not found")
+    if pi_id not in COMMAND_QUEUE: COMMAND_QUEUE[pi_id] = []
+    COMMAND_QUEUE[pi_id].append({"action": "sync_time", "server_time": datetime.utcnow().isoformat()})
+    return {"status": "queued", "message": "Time sync command sent"}
+
+@app.get("/api/orangepi/{pi_id}/folders")
+async def get_pi_folders(pi_id: int, db: Session = Depends(get_db)):
+    """Возвращает структуру папок с фото, ищет файлы рекурсивно"""
+    pi_folder = UPLOAD_DIR / f"pi_{pi_id}"
+    if not pi_folder.exists(): return {"folders": []}
+    folders = []
+    # Ищем все папки с датой (рекурсивно)
+    for day_folder in sorted(pi_folder.rglob("*"), reverse=True):
+        if day_folder.is_dir() and day_folder.name.count("-") == 2 and len(day_folder.name) == 10:
+            try:
+                cameras = []
+                # В папке даты ищем подпапки camera_X
+                for cam_folder in day_folder.iterdir():
+                    if cam_folder.is_dir() and cam_folder.name.startswith("camera_"):
+                        cam_id = cam_folder.name.replace("camera_", "")
+                        files = [f.name for f in sorted(cam_folder.glob("*.jpg"), reverse=True)]
+                        if files:
+                            cameras.append({"camera_id": cam_id, "count": len(files), "files": files[:20]})
+                if cameras:
+                    # Проверяем, нет ли уже такой даты в списке
+                    if not any(f["date"] == day_folder.name for f in folders):
+                        folders.append({"date": day_folder.name, "cameras": cameras})
+            except Exception as e:
+                logger.warning(f"Folder parse error: {e}")
+    return {"folders": sorted(folders, key=lambda x: x["date"], reverse=True)[:30]}
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "Camera Monitor", "docs": "/docs"}
+
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+if __name__ == "__main__":
+    import uvicorn; uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)

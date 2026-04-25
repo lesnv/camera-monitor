@@ -1,0 +1,19 @@
+services:
+  camera-monitor:
+    build: .
+    container_name: camera-monitor
+    restart: unless-stopped
+    ports:
+      - "1000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    environment:
+      - TZ=Europe/Moscow
+      - OLLAMA_BASE_URL=http://192.168.31.127:9874
+    networks:
+      - monitor-net
+
+networks:
+  monitor-net:
+    driver: bridge

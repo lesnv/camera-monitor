@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📁 Галерея</title>
+  <link rel="icon" href=",">
+  <style>
+    :root { --bg:#0b1220; --card:#1e293b; --accent:#3b82f6; --success:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; }
+    body { font-family: system-ui; background: var(--bg); color: var(--text); margin: 0; padding: 16px; }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .header { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #334155; margin-bottom:20px; }
+    .card { background: var(--card); padding:16px; border-radius:8px; margin:12px 0; }
+    .filters { display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-bottom:16px; }
+    .filter-group { display:flex; flex-direction:column; gap:4px; }
+    .filter-group label { font-size:0.8em; color:var(--muted); }
+    .filter-group input, .filter-group select { padding:8px 12px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:var(--text); }
+    .btn { background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; }
+    .btn:hover { opacity:0.9; }
+    .btn.gray { background:#475569; }
+    .gallery-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px; }
+    .gallery-item { position:relative; border-radius:8px; overflow:hidden; background:#0f172a; aspect-ratio:16/10; cursor:pointer; transition:transform 0.2s; }
+    .gallery-item:hover { transform:scale(1.02); }
+    .gallery-img { width:100%; height:100%; object-fit:cover; }
+    .gallery-overlay { position:absolute; bottom:0; left:0; right:0; background:linear-gradient(transparent, rgba(0,0,0,0.8)); padding:8px; font-size:0.8em; color:#fff; }
+    .date-section { margin:24px 0; }
+    .date-header { font-size:1.2em; margin:16px 0 12px; color:var(--accent); border-bottom:1px solid #334155; padding-bottom:8px; }
+    .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:100; align-items:center; justify-content:center; }
+    .modal.active { display:flex; }
+    .modal-content { position:relative; max-width:95%; max-height:95%; }
+    .modal-img { max-width:100%; max-height:85vh; border-radius:8px; }
+    .modal-nav { position:absolute; top:50%; transform:translateY(-50%); font-size:2em; color:#fff; background:rgba(0,0,0,0.5); border:none; padding:12px 16px; cursor:pointer; border-radius:50%; }
+    .modal-prev { left:20px; }
+    .modal-next { right:20px; }
+    .modal-close { position:absolute; top:20px; right:20px; font-size:2em; color:#fff; background:none; border:none; cursor:pointer; }
+    .modal-info { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.7); padding:8px 16px; border-radius:20px; color:#fff; font-size:0.9em; max-width:80%; text-align:center; }
+    @media (max-width:768px) { .gallery-grid { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📁 Галерея</h1>
+      <button class="btn gray" onclick="location.href='/'">← Назад</button>
+    </div>
+    
+    <!-- Фильтры -->
+    <div class="card">
+      <div class="filters">
+        <div class="filter-group">
+          <label>📅 Дата от</label>
+          <input type="date" id="date-from">
+        </div>
+        <div class="filter-group">
+          <label>📅 Дата до</label>
+          <input type="date" id="date-to">
+        </div>
+        <div class="filter-group">
+          <label>🔌 Устройство</label>
+          <select id="filter-device"><option value="">Все</option></select>
+        </div>
+        <div class="filter-group">
+          <label>📹 Камера</label>
+          <select id="filter-camera"><option value="">Все</option></select>
+        </div>
+        <button class="btn" onclick="loadGallery()">🔍 Применить</button>
+        <label style="margin-left:12px"><input type="checkbox" id="filter-test"> 🧪 Тест</label>
+        <button class="btn gray" onclick="resetFilters()">♻️ Сброс</button>
+      </div>
+    </div>
+    
+    <!-- Галерея -->
+    <div id="gallery-container"></div>
+  </div>
+  
+  <!-- Модальное окно -->
+  <div class="modal" id="img-modal">
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <button class="modal-nav modal-prev" onclick="navImage(-1)">❮</button>
+    <button class="modal-nav modal-next" onclick="navImage(1)">❯</button>
+    <div class="modal-content">
+      <img class="modal-img" id="modal-img" src="">
+      <div class="modal-info" id="modal-info"></div>
+    </div>
+  </div>
+
+  <script>
+    const API = '';
+    let images = [];
+    let currentIndex = 0;
+    
+    document.addEventListener('DOMContentLoaded', async () => {
+      document.getElementById('date-to').valueAsDate = new Date();
+      await loadDevices();
+      await loadGallery();
+    });
+    
+    async function loadDevices() {
+      try {
+        const res = await fetch(`${API}/api/orangepi`);
+        const devices = await res.json();
+        const select = document.getElementById('filter-device');
+        devices.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.id;
+          opt.textContent = d.name || `Device ${d.id}`;
+          select.appendChild(opt);
+        });
+        select.onchange = () => loadCamerasForDevice(select.value);
+      } catch(e) { console.error('loadDevices:', e); }
+    }
+    
+    async function loadCamerasForDevice(deviceId) {
+      const select = document.getElementById('filter-camera');
+      select.innerHTML = '<option value="">Все</option>';
+      if (!deviceId) return;
+      try {
+        const res = await fetch(`${API}/api/orangepi/${deviceId}`);
+        const pi = await res.json();
+        (pi.cameras || []).forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name || `Camera ${c.id}`;
+          select.appendChild(opt);
+        });
+      } catch(e) { console.error('loadCameras:', e); }
+    }
+    
+    async function loadGallery() {
+      const container = document.getElementById('gallery-container');
+      container.innerHTML = '<p style="text-align:center;color:var(--muted);padding:40px">Загрузка...</p>';
+      
+      try {
+        // ⚠️ Замените на ваш реальный эндпоинт
+        const params = new URLSearchParams();
+        if (document.getElementById('date-from').value) params.append('from', document.getElementById('date-from').value);
+        if (document.getElementById('date-to').value) params.append('to', document.getElementById('date-to').value);
+        if (document.getElementById('filter-device').value) params.append('device_id', document.getElementById('filter-device').value);
+        if (document.getElementById('filter-camera').value) params.append('camera_id', document.getElementById('filter-camera').value);
+        
+        const res = await fetch(`${API}/api/gallery?${params}`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const items = data.items || data || [];
+        
+        if (!items.length) {
+          container.innerHTML = '<p style="text-align:center;color:var(--muted);padding:40px">📭 Нет фотографий по выбранным фильтрам</p>';
+          return;
+        }
+        
+        images = items;
+        // Группируем по датам
+        const grouped = {};
+        items.forEach(img => {
+          const date = (img.date || img.created_at || '').split('T')[0] || 'Unknown';
+          if (!grouped[date]) grouped[date] = [];
+          grouped[date].push(img);
+        });
+        
+        // Сортируем даты (новые сверху)
+        const sortedDates = Object.keys(grouped).sort((a,b) => new Date(b) - new Date(a));
+        
+        container.innerHTML = sortedDates.map(date => {
+          const dayItems = grouped[date];
+          const dateStr = new Date(date).toLocaleDateString('ru-RU', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+          return `<div class="date-section">
+            <div class="date-header">📅 ${dateStr} <span style="font-size:0.9em;color:var(--muted)">(${dayItems.length} фото)</span></div>
+            <div class="gallery-grid">
+              ${dayItems.map((img, idx) => {
+                const url = img.url || img.path || img.image_url || '';
+                const time = img.time || img.created_at ? new Date(img.time || img.created_at).toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'}) : '';
+                const cam = img.camera_name || `Cam ${img.camera_id||'?'}`;
+                const desc = img.desc || '';
+                return `<div class="gallery-item" onclick="openModal(${images.indexOf(img)})">
+                  <img class="gallery-img" src="${url}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22125%22><rect fill=%22%231e293b%22 width=%22100%%22 height=%22100%%22/><text fill=%22%2364748b%22 x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22>🖼️</text></svg>'">
+                  <div class="gallery-overlay">${time} • ${cam}${desc ? '<br><em style="font-size:0.9em">' + desc.slice(0,30) + (desc.length>30?'…':'') + '</em>' : ''}</div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>`;
+        }).join('');
+        
+      } catch(e) {
+        container.innerHTML = `<p style="color:var(--danger);text-align:center;padding:40px">❌ Ошибка: ${e.message}</p>`;
+        console.error('loadGallery:', e);
+      }
+    }
+    
+    function openModal(index) {
+      currentIndex = index;
+      updateModal();
+      document.getElementById('img-modal').classList.add('active');
+    }
+    
+    function updateModal() {
+      const img = images[currentIndex];
+      document.getElementById('modal-img').src = img.url || img.path || img.image_url || '';
+      const time = img.time || img.created_at ? new Date(img.time || img.created_at).toLocaleString('ru-RU') : '';
+      const cam = img.camera_name || `Cam ${img.camera_id||'?'}`;
+      const device = img.device_name || `Device ${img.device_id||'?'}`;
+      document.getElementById('modal-info').textContent = `${time} | 🔌 ${device} | 📹 ${cam}${img.desc ? ' • ' + img.desc : ''}`;
+    }
+    
+    function navImage(dir) {
+      currentIndex = (currentIndex + dir + images.length) % images.length;
+      updateModal();
+    }
+    
+    function closeModal() { document.getElementById('img-modal').classList.remove('active'); }
+    document.getElementById('img-modal').onclick = (e) => { if (e.target.id === 'img-modal') closeModal(); };
+    document.onkeydown = (e) => {
+      if (e.key === 'Escape') closeModal();
+      if (document.getElementById('img-modal').classList.contains('active')) {
+        if (e.key === 'ArrowLeft') navImage(-1);
+        if (e.key === 'ArrowRight') navImage(1);
+      }
+    };
+    
+    function resetFilters() {
+      document.getElementById('date-from').value = '';
+      document.getElementById('date-to').valueAsDate = new Date();
+      document.getElementById('filter-device').value = '';
+      document.getElementById('filter-camera').innerHTML = '<option value="">Все</option>';
+      loadGallery();
+    }
+  </script>
+</body>
+</html>
