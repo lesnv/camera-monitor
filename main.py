@@ -124,9 +124,7 @@ class OrangePiOut(BaseModel):
 
 class CameraCreate(BaseModel):
     name: str
-    orange_pi_id: int
     rtsp_url: Optional[str] = None
-    # новые поля
     ip_address: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
@@ -135,7 +133,6 @@ class CameraCreate(BaseModel):
     analysis_prompt: str = ""
     report_prompt: str = ""
     screenshot_quality: int = 640
-    # старые поля (опциональные)
     motion_interval: Optional[int] = None
     motion_sensitivity: Optional[int] = None
     resolution: Optional[str] = None
