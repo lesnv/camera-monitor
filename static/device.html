@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Устройство | Camera Monitor</title>
+    <style>
+        body { font-family: Arial; background: #1a1a1a; color: #eee; padding: 20px; }
+        h2 { margin-top: 30px; }
+        .camera {
+            background: #2a2a2a; border: 1px solid #444; border-radius: 8px;
+            padding: 15px; margin: 10px 0;
+        }
+        form {
+            background: #2a2a2a; padding: 20px; border-radius: 8px; margin-top: 20px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 15px;
+        }
+        form input, form textarea, form button { padding: 10px; font-size: 14px; }
+        form button { grid-column: span 2; background: #4caf50; color: white; border: none; border-radius: 6px; }
+        .gallery img { max-width: 200px; margin: 5px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>📹 Устройство #<span id="piId"></span></h1>
+    <h2>Камеры</h2>
+    <div id="cameras">Загрузка...</div>
+
+    <h2>Галерея скриншотов</h2>
+    <div class="gallery" id="gallery"></div>
+
+    <h2>Добавить камеру</h2>
+    <form id="addForm">
+        <input name="name" placeholder="Название" required>
+        <input name="ip_address" placeholder="IP камеры">
+        <input name="username" placeholder="Логин">
+        <input name="password" placeholder="Пароль" type="password">
+        <input name="rtsp_url" placeholder="RTSP URL">
+        <input name="sensitivity" placeholder="Чувствительность (1-100)" type="number" value="50">
+        <input name="detection_interval" placeholder="Интервал детекции (сек)" type="number" value="5">
+        <textarea name="analysis_prompt" placeholder="Промпт для анализа кадра"></textarea>
+        <textarea name="report_prompt" placeholder="Промпт для отчёта"></textarea>
+        <input name="screenshot_quality" placeholder="Высота скриншота (px)" type="number" value="640">
+        <button type="submit">Добавить камеру</button>
+    </form>
+
+    <script>
+        const piId = window.location.pathname.split('/')[2];
+        document.getElementById('piId').innerText = piId;
+
+        async function loadCameras() {
+            const res = await fetch(`/api/orangepi/${piId}/cameras`);
+            const data = await res.json();
+            const cont = document.getElementById('cameras');
+            cont.innerHTML = data.map(c => `
+                <div class="camera">
+                    <b>${c.name}</b> | IP: ${c.ip_address || '—'} | RTSP: ${c.rtsp_url || '—'}
+                    <br>Чувств: ${c.sensitivity} | Интервал: ${c.detection_interval}с
+                    | Качество: ${c.screenshot_quality}px
+                </div>
+            `).join('') || 'Нет камер';
+        }
+
+        async function loadGallery() {
+            const res = await fetch(`/api/screenshots?limit=50`);
+            const data = await res.json();
+            const gal = document.getElementById('gallery');
+            gal.innerHTML = (data.items || []).map(s => {
+                const title = s.description ? ` title="${s.description}"` : '';
+                return `<img src="${s.url}"${title}>`;
+            }).join('');
+        }
+
+        document.getElementById('addForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const form = e.target;
+            const payload = {};
+            new FormData(form).forEach((v, k) => {
+                if (['sensitivity','detection_interval','screenshot_quality'].includes(k))
+                    payload[k] = parseInt(v);
+                else payload[k] = v;
+            });
+            const res = await fetch(`/api/orangepi/${piId}/cameras`, {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                form.reset();
+                loadCameras();
+            }
+        });
+
+        loadCameras();
+        loadGallery();
+    </script>
+</body>
+</html>
