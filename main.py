@@ -4,7 +4,7 @@ import shutil
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Query, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -13,7 +13,7 @@ from sqlalchemy import (
     create_engine, Column, Integer, String, Boolean, Text,
     ForeignKey, DateTime, Float, func
 )
-from sqlalchemy.orm import sessionmaker, relationship, declarative_base
+from sqlalchemy.orm import sessionmaker, relationship, declarative_base, Session
 
 # ------------------------------
 # Конфигурация
@@ -84,6 +84,15 @@ class Screenshot(Base):
     created_at = Column(DateTime, default=func.now())
     camera = relationship("Camera", back_populates="screenshots")
 
+class Command(Base):
+    __tablename__ = "commands"
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(Integer, ForeignKey("orange_pis.id"), nullable=False)
+    camera_id = Column(Integer, ForeignKey("cameras.id"), nullable=False)
+    command = Column(String, default="snapshot")
+    status = Column(String, default="pending")
+    created_at = Column(DateTime, default=func.now())
+
 Base.metadata.create_all(bind=engine)
 
 # ------------------------------
@@ -100,22 +109,6 @@ class OrangePiStatusUpdate(BaseModel):
     disk_usage: float
     temperature: float
 
-class OrangePiOut(BaseModel):
-    id: int
-    name: str
-    ip: str
-    api_key: str
-    status: str
-    last_heartbeat: Optional[datetime] = None
-    cpu_usage: float
-    ram_usage: float
-    disk_usage: float
-    temperature: float
-    camera_count: int = 0
-    class Config:
-        orm_mode = True
-        from_attributes = True
-
 class CameraCreate(BaseModel):
     name: str
     rtsp_url: Optional[str] = None
@@ -131,36 +124,6 @@ class CameraCreate(BaseModel):
     motion_sensitivity: Optional[int] = None
     resolution: Optional[str] = None
     enabled: Optional[bool] = None
-
-class CameraOut(BaseModel):
-    id: int
-    name: str
-    orange_pi_id: int
-    rtsp_url: Optional[str]
-    ip_address: Optional[str]
-    username: Optional[str]
-    sensitivity: int
-    detection_interval: int
-    analysis_prompt: str
-    report_prompt: str
-    screenshot_quality: int
-    enabled: bool
-    created_at: datetime
-    class Config:
-        orm_mode = True
-        from_attributes = True
-
-class ScreenshotOut(BaseModel):
-    id: int
-    camera_id: int
-    filename: str
-    url: str
-    description: Optional[str] = None
-    motion_level: int
-    created_at: datetime
-    class Config:
-        orm_mode = True
-        from_attributes = True
 
 # ------------------------------
 # FastAPI приложение
@@ -181,58 +144,76 @@ def check_heartbeat(pi):
     elif pi.last_heartbeat:
         pi.status = "online"
 
-# ------------------------------
+# ============================================================
 # Эндпоинты Orange Pi
-# ------------------------------
-@app.get("/api/orangepi", response_model=List[OrangePiOut])
-def list_orangepi(db=next(get_db())):
+# ============================================================
+@app.get("/api/orangepi")
+def list_orangepi(db: Session = Depends(get_db)):
     pis = db.query(OrangePi).all()
     result = []
     for pi in pis:
         check_heartbeat(pi)
         camera_count = len(pi.cameras)
-        result.append(OrangePiOut(
-            id=pi.id, name=pi.name, ip=pi.ip, api_key=pi.api_key,
-            status=pi.status, last_heartbeat=pi.last_heartbeat,
-            cpu_usage=pi.cpu_usage, ram_usage=pi.ram_usage,
-            disk_usage=pi.disk_usage, temperature=pi.temperature,
-            camera_count=camera_count
-        ))
+        result.append({
+            "id": pi.id,
+            "name": pi.name,
+            "ip": pi.ip,
+            "api_key": pi.api_key,
+            "status": pi.status,
+            "last_heartbeat": pi.last_heartbeat.isoformat() if pi.last_heartbeat else None,
+            "cpu_usage": pi.cpu_usage,
+            "ram_usage": pi.ram_usage,
+            "disk_usage": pi.disk_usage,
+            "temperature": pi.temperature,
+            "camera_count": camera_count
+        })
     db.commit()
     return result
 
-@app.post("/api/orangepi", response_model=OrangePiOut)
-def create_orangepi(data: OrangePiCreate, db=next(get_db())):
+@app.post("/api/orangepi")
+def create_orangepi(data: OrangePiCreate, db: Session = Depends(get_db)):
     pi = OrangePi(**data.dict())
     db.add(pi)
     db.commit()
     db.refresh(pi)
-    return OrangePiOut(
-        id=pi.id, name=pi.name, ip=pi.ip, api_key=pi.api_key,
-        status=pi.status, last_heartbeat=pi.last_heartbeat,
-        cpu_usage=pi.cpu_usage, ram_usage=pi.ram_usage,
-        disk_usage=pi.disk_usage, temperature=pi.temperature,
-        camera_count=0
-    )
+    return {
+        "id": pi.id,
+        "name": pi.name,
+        "ip": pi.ip,
+        "api_key": pi.api_key,
+        "status": pi.status,
+        "last_heartbeat": pi.last_heartbeat.isoformat() if pi.last_heartbeat else None,
+        "cpu_usage": pi.cpu_usage,
+        "ram_usage": pi.ram_usage,
+        "disk_usage": pi.disk_usage,
+        "temperature": pi.temperature,
+        "camera_count": 0
+    }
 
-@app.get("/api/orangepi/{pi_id}", response_model=OrangePiOut)
-def get_orangepi(pi_id: int, db=next(get_db())):
+@app.get("/api/orangepi/{pi_id}")
+def get_orangepi(pi_id: int, db: Session = Depends(get_db)):
     pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
     if not pi:
         raise HTTPException(404, "Orange Pi not found")
     check_heartbeat(pi)
     camera_count = len(pi.cameras)
     db.commit()
-    return OrangePiOut(
-        id=pi.id, name=pi.name, ip=pi.ip, api_key=pi.api_key,
-        status=pi.status, last_heartbeat=pi.last_heartbeat,
-        cpu_usage=pi.cpu_usage, ram_usage=pi.ram_usage,
-        disk_usage=pi.disk_usage, temperature=pi.temperature,
-        camera_count=camera_count
-    )
+    return {
+        "id": pi.id,
+        "name": pi.name,
+        "ip": pi.ip,
+        "api_key": pi.api_key,
+        "status": pi.status,
+        "last_heartbeat": pi.last_heartbeat.isoformat() if pi.last_heartbeat else None,
+        "cpu_usage": pi.cpu_usage,
+        "ram_usage": pi.ram_usage,
+        "disk_usage": pi.disk_usage,
+        "temperature": pi.temperature,
+        "camera_count": camera_count
+    }
 
 @app.post("/api/orangepi/{pi_id}/status")
-def update_orangepi_status(pi_id: int, data: OrangePiStatusUpdate, db=next(get_db())):
+def update_orangepi_status(pi_id: int, data: OrangePiStatusUpdate, db: Session = Depends(get_db)):
     pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
     if not pi:
         raise HTTPException(404, "Orange Pi not found")
@@ -245,11 +226,29 @@ def update_orangepi_status(pi_id: int, data: OrangePiStatusUpdate, db=next(get_d
     db.commit()
     return {"status": "ok"}
 
-# ------------------------------
+# ============================================================
 # Эндпоинты камер
-# ------------------------------
+# ============================================================
+class CameraOut(BaseModel):
+    id: int
+    name: str
+    orange_pi_id: int
+    rtsp_url: Optional[str]
+    ip_address: Optional[str]
+    username: Optional[str]
+    sensitivity: int
+    detection_interval: int
+    analysis_prompt: str
+    report_prompt: str
+    screenshot_quality: int
+    enabled: bool
+    created_at: datetime
+    class Config:
+        orm_mode = True
+        from_attributes = True
+
 @app.post("/api/orangepi/{pi_id}/cameras", response_model=CameraOut)
-def create_camera_for_pi(pi_id: int, data: CameraCreate = Body(...), db=next(get_db())):
+def create_camera_for_pi(pi_id: int, data: CameraCreate = Body(...), db: Session = Depends(get_db)):
     pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
     if not pi:
         raise HTTPException(404, "Orange Pi not found")
@@ -276,14 +275,14 @@ def create_camera_for_pi(pi_id: int, data: CameraCreate = Body(...), db=next(get
     return cam
 
 @app.get("/api/orangepi/{pi_id}/cameras", response_model=List[CameraOut])
-def list_cameras_for_pi(pi_id: int, db=next(get_db())):
+def list_cameras_for_pi(pi_id: int, db: Session = Depends(get_db)):
     pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
     if not pi:
         raise HTTPException(404, "Orange Pi not found")
     return pi.cameras
 
 @app.put("/api/cameras/{camera_id}", response_model=CameraOut)
-def update_camera(camera_id: int, data: CameraCreate = Body(...), db=next(get_db())):
+def update_camera(camera_id: int, data: CameraCreate = Body(...), db: Session = Depends(get_db)):
     cam = db.query(Camera).filter(Camera.id == camera_id).first()
     if not cam:
         raise HTTPException(404, "Camera not found")
@@ -294,21 +293,55 @@ def update_camera(camera_id: int, data: CameraCreate = Body(...), db=next(get_db
     db.refresh(cam)
     return cam
 
-@app.post("/api/cameras/{camera_id}/snapshot")
-def request_snapshot(camera_id: int):
-    # В будущем можно добавить таблицу commands и обработать в агенте
-    return {"status": "queued", "message": f"Snapshot request for camera {camera_id} has been queued"}
+@app.delete("/api/cameras/{camera_id}")
+def delete_camera(camera_id: int, db: Session = Depends(get_db)):
+    cam = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not cam:
+        raise HTTPException(404, "Camera not found")
+    db.delete(cam)
+    db.commit()
+    return {"status": "deleted"}
 
-# ------------------------------
+# ============================================================
+# Система команд
+# ============================================================
+@app.post("/api/cameras/{camera_id}/snapshot")
+def request_snapshot(camera_id: int, db: Session = Depends(get_db)):
+    cam = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not cam:
+        raise HTTPException(404, "Camera not found")
+    cmd = Command(device_id=cam.orange_pi_id, camera_id=camera_id, command="snapshot")
+    db.add(cmd)
+    db.commit()
+    return {"status": "queued", "message": "Snapshot command created"}
+
+@app.get("/api/orangepi/{pi_id}/commands")
+def get_pending_commands(pi_id: int, db: Session = Depends(get_db)):
+    commands = db.query(Command).filter(
+        Command.device_id == pi_id,
+        Command.status == "pending"
+    ).all()
+    return [{"id": c.id, "camera_id": c.camera_id, "command": c.command} for c in commands]
+
+@app.put("/api/commands/{command_id}/complete")
+def complete_command(command_id: int, db: Session = Depends(get_db)):
+    cmd = db.query(Command).filter(Command.id == command_id).first()
+    if not cmd:
+        raise HTTPException(404, "Command not found")
+    cmd.status = "completed"
+    db.commit()
+    return {"status": "ok"}
+
+# ============================================================
 # Загрузка и просмотр скриншотов
-# ------------------------------
+# ============================================================
 @app.post("/api/upload/{camera_id}")
 async def upload_photo(
     camera_id: int,
     file: UploadFile = File(...),
     motion_level: int = Form(0),
     description: Optional[str] = Form(None),
-    db=next(get_db())
+    db: Session = Depends(get_db)
 ):
     cam = db.query(Camera).filter(Camera.id == camera_id, Camera.enabled == True).first()
     if not cam:
@@ -329,14 +362,14 @@ async def upload_photo(
     db.commit()
     return {"status": "ok", "filename": filename, "message": "Photo saved"}
 
-@app.get("/api/screenshots", response_model=dict)
+@app.get("/api/screenshots")
 def list_screenshots(
     camera_id: Optional[int] = None,
     start: Optional[str] = Query(None, description="Начальная дата (YYYY-MM-DD)"),
     end: Optional[str] = Query(None, description="Конечная дата (YYYY-MM-DD)"),
     page: int = 1,
     limit: int = 20,
-    db=next(get_db())
+    db: Session = Depends(get_db)
 ):
     query = db.query(Screenshot)
     if camera_id is not None:
@@ -349,7 +382,7 @@ def list_screenshots(
             raise HTTPException(400, "Invalid start date format. Use YYYY-MM-DD")
     if end:
         try:
-            end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)  # включительно до конца дня
+            end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
             query = query.filter(Screenshot.created_at < end_dt)
         except ValueError:
             raise HTTPException(400, "Invalid end date format. Use YYYY-MM-DD")
@@ -378,9 +411,9 @@ def list_screenshots(
         "total_pages": (total + limit - 1) // limit
     }
 
-# ------------------------------
+# ============================================================
 # Статические маршруты
-# ------------------------------
+# ============================================================
 @app.get("/")
 def root():
     return FileResponse("/app/static/index.html")
@@ -389,13 +422,5 @@ def root():
 def device_page(pi_id: int):
     return FileResponse("/app/static/device.html")
 
-# Монтирование статики
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/uploads/resized", StaticFiles(directory=UPLOAD_DIR), name="uploads_resized")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
-
-@app.get("/{full_path:path}")
-async def catch_all(full_path: str):
-    static_file = os.path.join("/app/static", full_path)
-    if os.path.isfile(static_file):
-        return FileResponse(static_file)
-    raise HTTPException(status_code=404)

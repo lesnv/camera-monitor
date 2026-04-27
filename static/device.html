@@ -113,10 +113,10 @@
                         <div class="camera-actions">
                             <button class="btn btn-primary" onclick='openEditModal(${JSON.stringify(c)})'>✏️ Редактировать</button>
                             <button class="btn" onclick="requestSnapshot(${c.id})">📷 Тестовый снимок</button>
+                            <button class="btn btn-danger" onclick="deleteCamera(${c.id})">🗑️ Удалить</button>
                         </div>
                     </div>
                 `).join('') || 'Нет камер';
-                // Заполняем select списка камер
                 const select = document.getElementById('cameraSelect');
                 select.innerHTML = '<option value="">Все камеры</option>';
                 allCameras.forEach(c => {
@@ -237,6 +237,23 @@
                 alert(data.message || 'Запрос отправлен');
             } catch(err) {
                 alert('Ошибка: ' + err.message);
+            }
+        }
+
+        async function deleteCamera(cameraId) {
+            if (!confirm('Вы уверены, что хотите удалить эту камеру? Все её скриншоты останутся на сервере.')) return;
+            try {
+                const res = await fetch(`/api/cameras/${cameraId}`, { method: 'DELETE' });
+                if (res.ok) {
+                    alert('Камера удалена');
+                    loadCameras();
+                    loadGallery();
+                } else {
+                    const err = await res.json();
+                    alert('Ошибка удаления: ' + (err.detail || res.statusText));
+                }
+            } catch(err) {
+                alert('Сетевая ошибка: ' + err.message);
             }
         }
 
