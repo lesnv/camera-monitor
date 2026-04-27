@@ -99,7 +99,6 @@
         document.getElementById('piId').innerText = piId;
         let allCameras = [];
 
-        // Загрузка списка камер
         async function loadCameras() {
             try {
                 const res = await fetch(`/api/orangepi/${piId}/cameras`);
@@ -119,7 +118,6 @@
                     </div>
                 `).join('') || 'Нет камер';
 
-                // Заполняем выпадающий список для фильтра галереи
                 const select = document.getElementById('cameraSelect');
                 select.innerHTML = '<option value="">Все камеры</option>';
                 allCameras.forEach(c => {
@@ -134,7 +132,6 @@
             }
         }
 
-        // Загрузка галереи с учётом фильтров
         async function loadGallery() {
             const cameraId = document.getElementById('cameraSelect').value;
             const start = document.getElementById('startDate').value;
@@ -156,7 +153,6 @@
             }
         }
 
-        // Добавление камеры
         document.getElementById('addForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const form = e.target;
@@ -184,7 +180,6 @@
             }
         });
 
-        // Редактирование камеры
         function openEditModal(camera) {
             document.getElementById('editCameraId').value = camera.id;
             document.getElementById('editName').value = camera.name || '';
@@ -236,7 +231,6 @@
             }
         }
 
-        // Тестовый снимок
         async function requestSnapshot(cameraId) {
             try {
                 const res = await fetch(`/api/cameras/${cameraId}/snapshot`, { method: 'POST' });
@@ -247,7 +241,6 @@
             }
         }
 
-        // Удаление камеры
         async function deleteCamera(cameraId) {
             if (!confirm('Вы уверены, что хотите удалить эту камеру? Все её скриншоты останутся на сервере.')) return;
             try {
@@ -265,7 +258,6 @@
             }
         }
 
-        // Первоначальная загрузка
         loadCameras();
     </script>
 </body>
