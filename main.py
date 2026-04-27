@@ -1,4 +1,4 @@
-import os, uuid, shutil
+import os, uuid, shutil, requests, base64, json, threading, time
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Query, Depends
@@ -9,9 +9,6 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, ForeignKey, DateTime, Float, func
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base, Session
 
-# ------------------------------
-# Конфигурация
-# ------------------------------
 DATABASE_URL = "sqlite:////app/data/camera.db"
 UPLOAD_DIR = "/app/uploads/resized"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -20,9 +17,6 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# ------------------------------
-# Модели SQLAlchemy
-# ------------------------------
 class OrangePi(Base):
     __tablename__ = "orange_pis"
     id = Column(Integer, primary_key=True, index=True)
@@ -59,10 +53,12 @@ class Camera(Base):
     resolution = Column(String, default="640")
     analysis_model = Column(String, default="qwen2.5vl:3b")
     report_model = Column(String, default="qwen2.5vl:3b")
+    external_api_url = Column(String, nullable=True)
+    external_api_key = Column(String, nullable=True)
+    external_model_name = Column(String, nullable=True)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
     orange_pi = relationship("OrangePi", back_populates="cameras")
-    # ВАЖНО: каскадное удаление скриншотов
     screenshots = relationship("Screenshot", back_populates="camera", cascade="all, delete-orphan")
 
 class Screenshot(Base):
@@ -88,12 +84,19 @@ class Command(Base):
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=func.now())
 
-# Создаём таблицы (если их нет)
+class Report(Base):
+    __tablename__ = "reports"
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(Integer, ForeignKey("orange_pis.id"), nullable=False)
+    camera_id = Column(Integer, ForeignKey("cameras.id"), nullable=True)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    report_text = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
 Base.metadata.create_all(bind=engine)
 
-# ------------------------------
-# Pydantic схемы
-# ------------------------------
+# ---------- Pydantic схемы ----------
 class OrangePiCreate(BaseModel):
     name: str
     ip: str
@@ -120,6 +123,32 @@ class CameraCreate(BaseModel):
     motion_sensitivity: Optional[int] = None
     resolution: Optional[str] = None
     enabled: Optional[bool] = None
+    analysis_model: Optional[str] = None
+    report_model: Optional[str] = None
+    external_api_url: Optional[str] = None
+    external_api_key: Optional[str] = None
+    external_model_name: Optional[str] = None
+
+class CameraUpdate(BaseModel):
+    name: Optional[str] = None
+    rtsp_url: Optional[str] = None
+    ip_address: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    sensitivity: Optional[int] = None
+    detection_interval: Optional[int] = None
+    analysis_prompt: Optional[str] = None
+    report_prompt: Optional[str] = None
+    screenshot_quality: Optional[int] = None
+    motion_interval: Optional[int] = None
+    motion_sensitivity: Optional[int] = None
+    resolution: Optional[str] = None
+    enabled: Optional[bool] = None
+    analysis_model: Optional[str] = None
+    report_model: Optional[str] = None
+    external_api_url: Optional[str] = None
+    external_api_key: Optional[str] = None
+    external_model_name: Optional[str] = None
 
 class CameraOut(BaseModel):
     id: int
@@ -135,13 +164,15 @@ class CameraOut(BaseModel):
     screenshot_quality: int
     enabled: bool
     created_at: datetime
+    analysis_model: Optional[str]
+    report_model: Optional[str]
+    external_api_url: Optional[str]
+    external_api_key: Optional[str]
+    external_model_name: Optional[str]
     class Config:
         orm_mode = True
         from_attributes = True
 
-# ------------------------------
-# FastAPI приложение
-# ------------------------------
 app = FastAPI(title="Camera Monitor v2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -158,9 +189,84 @@ def check_heartbeat(pi):
     elif pi.last_heartbeat:
         pi.status = "online"
 
-# ============================================================
-# Эндпоинты Orange Pi
-# ============================================================
+# ---------- AI‑анализ ----------
+def call_ai_api(image_base64: Optional[str], prompt: str, model: str, 
+                external_url: Optional[str] = None, 
+                external_key: Optional[str] = None,
+                external_model: Optional[str] = None) -> Optional[str]:
+    try:
+        if external_url and external_key and external_model:
+            headers = {
+                "Authorization": f"Bearer {external_key}",
+                "Content-Type": "application/json"
+            }
+            messages = [{"role": "user", "content": []}]
+            if image_base64:
+                messages[0]["content"].append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                })
+            messages[0]["content"].append({"type": "text", "text": prompt})
+            payload = {"model": external_model, "messages": messages, "max_tokens": 300}
+            resp = requests.post(external_url, headers=headers, json=payload, timeout=60)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
+            else:
+                print(f"External API error: {resp.status_code} {resp.text}")
+                return None
+        else:
+            ollama_base = os.getenv("OLLAMA_BASE_URL", "http://192.168.31.127:9874")
+            url = f"{ollama_base}/api/query" if image_base64 else f"{ollama_base}/api/generate"
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False
+            }
+            if image_base64:
+                payload["image_base64"] = image_base64
+            resp = requests.post(url, json=payload, timeout=60)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("response", "").strip()
+            else:
+                print(f"Ollama error: {resp.status_code} {resp.text}")
+                return None
+    except Exception as e:
+        print(f"AI call failed: {e}")
+        return None
+
+def analyze_screenshot(screenshot_id: int, db: Session):
+    shot = db.query(Screenshot).filter(Screenshot.id == screenshot_id).first()
+    if not shot:
+        return
+    filepath = os.path.join(UPLOAD_DIR, shot.filename)
+    if not os.path.exists(filepath):
+        return
+    try:
+        with open(filepath, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("utf-8")
+        camera = shot.camera
+        prompt = camera.analysis_prompt if camera and camera.analysis_prompt.strip() else "Кратко одним предложением опиши, что на кадре"
+        model = camera.analysis_model or "qwen2.5vl:3b"
+        description = call_ai_api(
+            image_base64=encoded,
+            prompt=prompt,
+            model=model,
+            external_url=camera.external_api_url,
+            external_key=camera.external_api_key,
+            external_model=camera.external_model_name
+        )
+        if description:
+            shot.description = description
+            db.commit()
+            print(f"Screenshot {screenshot_id}: AI description saved")
+        else:
+            print(f"Screenshot {screenshot_id}: No description generated")
+    except Exception as e:
+        print(f"Analysis failed for screenshot {screenshot_id}: {e}")
+
+# ---------- Эндпоинты Orange Pi ----------
 @app.get("/api/orangepi")
 def list_orangepi(db: Session = Depends(get_db)):
     pis = db.query(OrangePi).all()
@@ -218,9 +324,7 @@ def update_orangepi_status(pi_id: int, data: OrangePiStatusUpdate, db: Session =
     db.commit()
     return {"status": "ok"}
 
-# ============================================================
-# Эндпоинты камер
-# ============================================================
+# ---------- Эндпоинты камер ----------
 @app.post("/api/orangepi/{pi_id}/cameras", response_model=CameraOut)
 def create_camera_for_pi(pi_id: int, data: CameraCreate = Body(...), db: Session = Depends(get_db)):
     pi = db.query(OrangePi).filter(OrangePi.id == pi_id).first()
@@ -235,7 +339,12 @@ def create_camera_for_pi(pi_id: int, data: CameraCreate = Body(...), db: Session
         motion_interval=data.motion_interval or 10,
         motion_sensitivity=data.motion_sensitivity or 50,
         resolution=data.resolution or "640",
-        enabled=data.enabled if data.enabled is not None else True
+        enabled=data.enabled if data.enabled is not None else True,
+        analysis_model=data.analysis_model or "qwen2.5vl:3b",
+        report_model=data.report_model or "qwen2.5vl:3b",
+        external_api_url=data.external_api_url,
+        external_api_key=data.external_api_key,
+        external_model_name=data.external_model_name
     )
     db.add(cam); db.commit(); db.refresh(cam)
     return cam
@@ -256,17 +365,26 @@ def update_camera(camera_id: int, data: CameraCreate = Body(...), db: Session = 
     db.commit(); db.refresh(cam)
     return cam
 
+@app.patch("/api/cameras/{camera_id}", response_model=CameraOut)
+def patch_camera(camera_id: int, data: CameraUpdate = Body(...), db: Session = Depends(get_db)):
+    cam = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not cam: raise HTTPException(404, "Camera not found")
+    update_data = data.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(cam, key, value)
+    db.commit(); db.refresh(cam)
+    return cam
+
 @app.delete("/api/cameras/{camera_id}")
 def delete_camera(camera_id: int, db: Session = Depends(get_db)):
     cam = db.query(Camera).filter(Camera.id == camera_id).first()
     if not cam: raise HTTPException(404, "Camera not found")
-    db.delete(cam)  # каскадное удаление скриншотов и команд (если они связаны)
+    db.query(Command).filter(Command.camera_id == camera_id).delete()
+    db.delete(cam)
     db.commit()
     return {"status": "deleted"}
 
-# ============================================================
-# Система команд
-# ============================================================
+# ---------- Команды ----------
 @app.post("/api/cameras/{camera_id}/snapshot")
 def request_snapshot(camera_id: int, db: Session = Depends(get_db)):
     cam = db.query(Camera).filter(Camera.id == camera_id).first()
@@ -291,9 +409,7 @@ def complete_command(command_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "ok"}
 
-# ============================================================
-# Загрузка и просмотр скриншотов
-# ============================================================
+# ---------- Скриншоты ----------
 @app.post("/api/upload/{camera_id}")
 async def upload_photo(
     camera_id: int,
@@ -313,6 +429,7 @@ async def upload_photo(
         motion_level=motion_level, description=description
     )
     db.add(shot); db.commit()
+    analyze_screenshot(shot.id, db)
     return {"status": "ok", "filename": filename, "message": "Photo saved"}
 
 @app.get("/api/screenshots")
@@ -350,14 +467,94 @@ def list_screenshots(
         "total_pages": (total + limit - 1) // limit
     }
 
-# ============================================================
-# Статические маршруты
-# ============================================================
+# ---------- Отчёты ----------
+@app.post("/api/generate_report/{device_id}")
+def generate_report(device_id: int, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    start_time = now - timedelta(hours=12)
+    pis = db.query(OrangePi).filter(OrangePi.id == device_id).first()
+    if not pis:
+        raise HTTPException(404, "Device not found")
+
+    for camera in pis.cameras:
+        screenshots = db.query(Screenshot).filter(
+            Screenshot.camera_id == camera.id,
+            Screenshot.created_at >= start_time,
+            Screenshot.created_at <= now
+        ).order_by(Screenshot.created_at.asc()).all()
+        if not screenshots:
+            continue
+        descriptions = [f"[{s.created_at.strftime('%H:%M')}] {s.description}" for s in screenshots if s.description]
+        if not descriptions:
+            continue
+        prompt = camera.report_prompt or "Сделай краткий отчёт по событиям за последние 12 часов"
+        model = camera.report_model or "qwen2.5vl:3b"
+        full_prompt = f"{prompt}\n\nСобытия:\n" + "\n".join(descriptions)
+        report_text = call_ai_api(
+            image_base64=None,
+            prompt=full_prompt,
+            model=model,
+            external_url=camera.external_api_url,
+            external_key=camera.external_api_key,
+            external_model=camera.external_model_name
+        )
+        if report_text:
+            report = Report(
+                device_id=device_id,
+                camera_id=camera.id,
+                start_time=start_time,
+                end_time=now,
+                report_text=report_text
+            )
+            db.add(report)
+            db.commit()
+            print(f"Report generated for camera {camera.id}")
+    return {"status": "ok", "message": "Reports generated"}
+
+@app.get("/api/reports")
+def list_reports(device_id: Optional[int] = None, limit: int = 10, db: Session = Depends(get_db)):
+    query = db.query(Report).order_by(Report.created_at.desc())
+    if device_id is not None:
+        query = query.filter(Report.device_id == device_id)
+    items = query.limit(limit).all()
+    return [{
+        "id": r.id,
+        "device_id": r.device_id,
+        "camera_id": r.camera_id,
+        "start_time": r.start_time.isoformat(),
+        "end_time": r.end_time.isoformat(),
+        "report_text": r.report_text,
+        "created_at": r.created_at.isoformat()
+    } for r in items]
+
+# ---------- Фоновые отчёты ----------
+def schedule_reports():
+    while True:
+        now = datetime.utcnow()
+        if 7 <= now.hour < 19:
+            next_run = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        else:
+            next_run = now.replace(hour=7, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        seconds_until = (next_run - now).total_seconds()
+        time.sleep(seconds_until)
+        db = SessionLocal()
+        try:
+            devices = db.query(OrangePi).all()
+            for dev in devices:
+                generate_report(dev.id, db)
+        except Exception as e:
+            print(f"Scheduled report error: {e}")
+        finally:
+            db.close()
+
+@app.on_event("startup")
+def startup_event():
+    threading.Thread(target=schedule_reports, daemon=True).start()
+
+# ---------- Статика ----------
 @app.get("/")
 def root(): return FileResponse("/app/static/index.html")
-
 @app.get("/device/{pi_id}")
 def device_page(pi_id: int): return FileResponse("/app/static/device.html")
-
 app.mount("/uploads/resized", StaticFiles(directory=UPLOAD_DIR), name="uploads_resized")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")

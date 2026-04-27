@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>Устройство | Camera Monitor</title>
     <style>
+        /* стили без изменений */
         body { font-family: Arial; background: #1a1a1a; color: #eee; padding: 20px; }
         h2 { margin-top: 30px; }
         .camera { background: #2a2a2a; border: 1px solid #444; border-radius: 8px; padding: 15px; margin: 10px 0; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
@@ -14,22 +15,30 @@
         .btn-danger { background: #f44336; }
         .btn-primary { background: #2196F3; }
         .gallery { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-        .gallery img { max-width: 200px; border-radius: 4px; cursor: pointer; }
+        .gallery-item { text-align: center; }
+        .gallery img { max-width: 200px; border-radius: 4px; cursor: pointer; display: block; margin: 0 auto; }
+        .description { color: #ccc; font-size: 12px; max-width: 200px; word-wrap: break-word; margin-top: 4px; }
         .filters { display: flex; gap: 15px; align-items: center; margin: 15px 0; flex-wrap: wrap; }
         .filters label { margin-right: 5px; }
         .filters input, .filters select { padding: 6px; background: #1e1e1e; color: #eee; border: 1px solid #444; }
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); justify-content: center; align-items: center; }
-        .modal-content { background: #2a2a2a; padding: 20px; border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; }
+        .modal-content { background: #2a2a2a; padding: 20px; border-radius: 8px; width: 90%; max-width: 700px; max-height: 80vh; overflow-y: auto; }
         .modal-content input, .modal-content textarea, .modal-content select { width: 100%; padding: 8px; margin: 5px 0 15px 0; font-size: 14px; background: #1e1e1e; color: #eee; border: 1px solid #444; }
         .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
         .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
         .close:hover { color: white; }
+        .report { background: #2a2a2a; border: 1px solid #444; padding: 10px; margin: 10px 0; border-radius: 8px; }
     </style>
 </head>
 <body>
     <h1>📹 Устройство #<span id="piId"></span></h1>
     <h2>Камеры</h2>
     <div id="cameras">Загрузка...</div>
+
+    <button class="btn" onclick="generateReport()">📄 Сгенерировать отчёт</button>
+
+    <h2>Отчёты</h2>
+    <div id="reports" style="margin-bottom:20px;">Загрузка...</div>
 
     <h2>Галерея скриншотов</h2>
     <div class="filters">
@@ -82,8 +91,18 @@
                 <input type="number" id="editInterval">
                 <label>Промпт анализа</label>
                 <textarea id="editAnalysisPrompt"></textarea>
+                <label>Модель для анализа (Ollama)</label>
+                <input type="text" id="editAnalysisModel" placeholder="qwen2.5vl:3b">
                 <label>Промпт отчёта</label>
                 <textarea id="editReportPrompt"></textarea>
+                <label>Модель для отчёта (Ollama)</label>
+                <input type="text" id="editReportModel" placeholder="qwen2.5vl:3b">
+                <label>Внешний API URL (OpenAI-совместимый)</label>
+                <input type="text" id="editExternalUrl" placeholder="https://api.openai.com/v1/chat/completions">
+                <label>Внешний API ключ</label>
+                <input type="password" id="editExternalKey" placeholder="sk-...">
+                <label>Внешняя модель (название)</label>
+                <input type="text" id="editExternalModel" placeholder="gpt-4-vision-preview">
                 <label>Высота скриншота</label>
                 <input type="number" id="editQuality" min="220" max="1080">
                 <div class="modal-actions">
@@ -111,13 +130,12 @@
                             <br>Чувств: ${c.sensitivity} | Интервал: ${c.detection_interval}с | Качество: ${c.screenshot_quality}px
                         </div>
                         <div class="camera-actions">
-                            <button class="btn btn-primary" onclick='openEditModal(${JSON.stringify(c)})'>✏️ Редактировать</button>
+                            <button class="btn btn-primary" onclick="openEditModal(${c.id})">✏️ Редактировать</button>
                             <button class="btn" onclick="requestSnapshot(${c.id})">📷 Тестовый снимок</button>
                             <button class="btn btn-danger" onclick="deleteCamera(${c.id})">🗑️ Удалить</button>
                         </div>
                     </div>
                 `).join('') || 'Нет камер';
-
                 const select = document.getElementById('cameraSelect');
                 select.innerHTML = '<option value="">Все камеры</option>';
                 allCameras.forEach(c => {
@@ -127,11 +145,77 @@
                     select.appendChild(opt);
                 });
                 loadGallery();
+                loadReports();
             } catch(e) {
                 document.getElementById('cameras').innerText = 'Ошибка загрузки камер';
             }
         }
 
+        function openEditModal(cameraId) {
+            const camera = allCameras.find(c => c.id === cameraId);
+            if (!camera) return;
+            document.getElementById('editCameraId').value = camera.id;
+            document.getElementById('editName').value = camera.name || '';
+            document.getElementById('editIp').value = camera.ip_address || '';
+            document.getElementById('editUsername').value = camera.username || '';
+            document.getElementById('editPassword').value = camera.password || '';
+            document.getElementById('editRtsp').value = camera.rtsp_url || '';
+            document.getElementById('editSensitivity').value = camera.sensitivity || 50;
+            document.getElementById('editInterval').value = camera.detection_interval || 30;
+            document.getElementById('editAnalysisPrompt').value = camera.analysis_prompt || '';
+            document.getElementById('editAnalysisModel').value = camera.analysis_model || 'qwen2.5vl:3b';
+            document.getElementById('editReportPrompt').value = camera.report_prompt || '';
+            document.getElementById('editReportModel').value = camera.report_model || 'qwen2.5vl:3b';
+            document.getElementById('editExternalUrl').value = camera.external_api_url || '';
+            document.getElementById('editExternalKey').value = camera.external_api_key || '';
+            document.getElementById('editExternalModel').value = camera.external_model_name || '';
+            document.getElementById('editQuality').value = camera.screenshot_quality || 320;
+            document.getElementById('editModal').style.display = 'flex';
+        }
+
+        function closeEditModal() {
+            document.getElementById('editModal').style.display = 'none';
+        }
+
+        async function saveEdit() {
+            const id = document.getElementById('editCameraId').value;
+            const payload = {
+                name: document.getElementById('editName').value,
+                ip_address: document.getElementById('editIp').value,
+                username: document.getElementById('editUsername').value,
+                password: document.getElementById('editPassword').value,
+                rtsp_url: document.getElementById('editRtsp').value,
+                sensitivity: parseInt(document.getElementById('editSensitivity').value) || 50,
+                detection_interval: parseInt(document.getElementById('editInterval').value) || 30,
+                analysis_prompt: document.getElementById('editAnalysisPrompt').value,
+                analysis_model: document.getElementById('editAnalysisModel').value,
+                report_prompt: document.getElementById('editReportPrompt').value,
+                report_model: document.getElementById('editReportModel').value,
+                external_api_url: document.getElementById('editExternalUrl').value,
+                external_api_key: document.getElementById('editExternalKey').value,
+                external_model_name: document.getElementById('editExternalModel').value,
+                screenshot_quality: parseInt(document.getElementById('editQuality').value) || 320
+            };
+            try {
+                const res = await fetch(`/api/cameras/${id}`, {
+                    method: 'PATCH',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    closeEditModal();
+                    loadCameras();
+                } else {
+                    const err = await res.json();
+                    alert('Ошибка сохранения: ' + (err.detail || res.statusText));
+                }
+            } catch(err) {
+                alert('Сетевая ошибка: ' + err.message);
+            }
+        }
+
+        // остальные функции (requestSnapshot, deleteCamera, loadGallery, loadReports, generateReport) без изменений...
+        // Вставьте их из предыдущей версии device.html
         async function loadGallery() {
             const cameraId = document.getElementById('cameraSelect').value;
             const start = document.getElementById('startDate').value;
@@ -146,8 +230,32 @@
                 const gal = document.getElementById('gallery');
                 gal.innerHTML = (data.items || []).map(s => {
                     const title = s.description ? ` title="${s.description}"` : '';
-                    return `<img src="${s.url}"${title} onclick="window.open(this.src)">`;
+                    const descHtml = s.description ? `<div class="description">${s.description}</div>` : '';
+                    return `<div class="gallery-item">` +
+                           `<img src="${s.url}"${title} onclick="window.open(this.src)">` +
+                           descHtml +
+                           `</div>`;
                 }).join('');
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        async function loadReports() {
+            try {
+                const res = await fetch(`/api/reports?device_id=${piId}&limit=10`);
+                const data = await res.json();
+                const container = document.getElementById('reports');
+                if (data.length === 0) {
+                    container.innerHTML = 'Нет отчётов';
+                    return;
+                }
+                container.innerHTML = data.map(r => `
+                    <div class="report">
+                        <b>Отчёт с ${new Date(r.start_time).toLocaleString()} по ${new Date(r.end_time).toLocaleString()}</b>
+                        <p>${r.report_text || 'Нет текста'}</p>
+                    </div>
+                `).join('');
             } catch(e) {
                 console.error(e);
             }
@@ -180,57 +288,6 @@
             }
         });
 
-        function openEditModal(camera) {
-            document.getElementById('editCameraId').value = camera.id;
-            document.getElementById('editName').value = camera.name || '';
-            document.getElementById('editIp').value = camera.ip_address || '';
-            document.getElementById('editUsername').value = camera.username || '';
-            document.getElementById('editPassword').value = camera.password || '';
-            document.getElementById('editRtsp').value = camera.rtsp_url || '';
-            document.getElementById('editSensitivity').value = camera.sensitivity || 50;
-            document.getElementById('editInterval').value = camera.detection_interval || 30;
-            document.getElementById('editAnalysisPrompt').value = camera.analysis_prompt || '';
-            document.getElementById('editReportPrompt').value = camera.report_prompt || '';
-            document.getElementById('editQuality').value = camera.screenshot_quality || 320;
-            document.getElementById('editModal').style.display = 'flex';
-        }
-
-        function closeEditModal() {
-            document.getElementById('editModal').style.display = 'none';
-        }
-
-        async function saveEdit() {
-            const id = document.getElementById('editCameraId').value;
-            const payload = {
-                name: document.getElementById('editName').value,
-                ip_address: document.getElementById('editIp').value,
-                username: document.getElementById('editUsername').value,
-                password: document.getElementById('editPassword').value,
-                rtsp_url: document.getElementById('editRtsp').value,
-                sensitivity: parseInt(document.getElementById('editSensitivity').value) || 50,
-                detection_interval: parseInt(document.getElementById('editInterval').value) || 30,
-                analysis_prompt: document.getElementById('editAnalysisPrompt').value,
-                report_prompt: document.getElementById('editReportPrompt').value,
-                screenshot_quality: parseInt(document.getElementById('editQuality').value) || 320
-            };
-            try {
-                const res = await fetch(`/api/cameras/${id}`, {
-                    method: 'PUT',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                if (res.ok) {
-                    closeEditModal();
-                    loadCameras();
-                } else {
-                    const err = await res.json();
-                    alert('Ошибка сохранения: ' + (err.detail || res.statusText));
-                }
-            } catch(err) {
-                alert('Сетевая ошибка: ' + err.message);
-            }
-        }
-
         async function requestSnapshot(cameraId) {
             try {
                 const res = await fetch(`/api/cameras/${cameraId}/snapshot`, { method: 'POST' });
@@ -256,6 +313,25 @@
             } catch(err) {
                 alert('Сетевая ошибка: ' + err.message);
             }
+        }
+
+        async function generateReport() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = 'Генерирую...';
+            try {
+                const res = await fetch(`/api/generate_report/${piId}`, { method: 'POST' });
+                if (res.ok) {
+                    alert('Отчёт сгенерирован');
+                    loadReports();
+                } else {
+                    alert('Ошибка генерации');
+                }
+            } catch(err) {
+                alert('Сетевая ошибка: ' + err.message);
+            }
+            btn.disabled = false;
+            btn.textContent = '📄 Сгенерировать отчёт';
         }
 
         loadCameras();
