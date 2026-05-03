@@ -1,246 +1,42 @@
 <!DOCTYPE html>
 <html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>Устройство | Camera Monitor</title>
-    <style>
-        body { font-family: Arial; background: #1a1a1a; color: #eee; padding: 20px; }
-        h2 { margin-top: 30px; }
-        .camera { background: #2a2a2a; border: 1px solid #444; border-radius: 8px; padding: 15px; margin: 10px 0; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-        .camera-info { flex: 1; }
-        .camera-actions { display: flex; gap: 10px; }
-        .btn { background: #4caf50; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 14px; }
-        .btn:hover { opacity: 0.9; }
-        .btn-danger { background: #f44336; }
-        .btn-primary { background: #2196F3; }
-        .gallery { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-        .gallery img { max-width: 200px; border-radius: 4px; cursor: pointer; }
-        .filters { display: flex; gap: 15px; align-items: center; margin: 15px 0; flex-wrap: wrap; }
-        .filters label { margin-right: 5px; }
-        .filters input, .filters select { padding: 6px; background: #1e1e1e; color: #eee; border: 1px solid #444; }
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); justify-content: center; align-items: center; }
-        .modal-content { background: #2a2a2a; padding: 20px; border-radius: 8px; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; }
-        .modal-content input, .modal-content textarea, .modal-content select { width: 100%; padding: 8px; margin: 5px 0 15px 0; font-size: 14px; background: #1e1e1e; color: #eee; border: 1px solid #444; }
-        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
-        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
-        .close:hover { color: white; }
-    </style>
+<head><meta charset="UTF-8"><title>Устройство | Camera Monitor</title>
+<style>
+    body { font-family: Arial; background: #1a1a1a; color: #eee; padding: 20px; }
+    .camera { background: #2a2a2a; border: 1px solid #444; border-radius: 8px; padding: 15px; margin: 10px 0; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    .btn { background: #4caf50; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+    .gallery img { max-width: 200px; border-radius: 4px; }
+</style>
 </head>
 <body>
-    <h1>📹 Устройство #<span id="piId"></span></h1>
-    <h2>Камеры</h2>
-    <div id="cameras">Загрузка...</div>
-
-    <h2>Галерея скриншотов</h2>
-    <div class="filters">
-        <label>Камера:</label>
-        <select id="cameraSelect" onchange="loadGallery()">
-            <option value="">Все камеры</option>
-        </select>
-        <label>с:</label>
-        <input type="date" id="startDate" onchange="loadGallery()">
-        <label>по:</label>
-        <input type="date" id="endDate" onchange="loadGallery()">
-    </div>
-    <div class="gallery" id="gallery"></div>
-
-    <h2>Добавить камеру</h2>
-    <form id="addForm" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-        <input name="name" placeholder="Название" required>
-        <input name="ip_address" placeholder="IP камеры">
-        <input name="username" placeholder="Логин">
-        <input name="password" placeholder="Пароль" type="password">
-        <input name="rtsp_url" placeholder="RTSP URL">
-        <input name="sensitivity" placeholder="Чувствительность (1-100)" type="number" value="50" min="1" max="100">
-        <input name="detection_interval" placeholder="Интервал детекции (сек)" type="number" value="30">
-        <textarea name="analysis_prompt" placeholder="Промпт для анализа кадра">Кратко одним предложением опиши, что на кадре, игнорируй текст цифры символы</textarea>
-        <textarea name="report_prompt" placeholder="Промпт для отчёта">важные событие за время </textarea>
-        <input name="screenshot_quality" placeholder="Высота скриншота (px)" type="number" value="320" min="220" max="1080">
-        <button type="submit" class="btn">Добавить камеру</button>
-    </form>
-
-    <!-- Модальное окно редактирования -->
-    <div id="editModal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeEditModal()">&times;</span>
-            <h2>Редактирование камеры</h2>
-            <form id="editForm">
-                <input type="hidden" id="editCameraId">
-                <label>Название</label>
-                <input type="text" id="editName" required>
-                <label>IP адрес</label>
-                <input type="text" id="editIp">
-                <label>Логин</label>
-                <input type="text" id="editUsername">
-                <label>Пароль</label>
-                <input type="password" id="editPassword">
-                <label>RTSP URL</label>
-                <input type="text" id="editRtsp">
-                <label>Чувствительность (1-100)</label>
-                <input type="number" id="editSensitivity" min="1" max="100">
-                <label>Интервал детекции (сек)</label>
-                <input type="number" id="editInterval">
-                <label>Промпт анализа</label>
-                <textarea id="editAnalysisPrompt"></textarea>
-                <label>Промпт отчёта</label>
-                <textarea id="editReportPrompt"></textarea>
-                <label>Высота скриншота</label>
-                <input type="number" id="editQuality" min="220" max="1080">
-                <div class="modal-actions">
-                    <button type="button" class="btn" onclick="saveEdit()">Сохранить</button>
-                    <button type="button" class="btn btn-danger" onclick="closeEditModal()">Отмена</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <script>
-        const piId = window.location.pathname.split('/')[2];
-        document.getElementById('piId').innerText = piId;
-        let allCameras = [];
-
-        async function loadCameras() {
-            try {
-                const res = await fetch(`/api/orangepi/${piId}/cameras`);
-                allCameras = await res.json();
-                const cont = document.getElementById('cameras');
-                cont.innerHTML = allCameras.map(c => `
-                    <div class="camera">
-                        <div class="camera-info">
-                            <b>${c.name}</b> | IP: ${c.ip_address || '—'} | RTSP: ${c.rtsp_url || '—'}
-                            <br>Чувств: ${c.sensitivity} | Интервал: ${c.detection_interval}с | Качество: ${c.screenshot_quality}px
-                        </div>
-                        <div class="camera-actions">
-                            <button class="btn btn-primary" onclick='openEditModal(${JSON.stringify(c)})'>✏️ Редактировать</button>
-                            <button class="btn" onclick="requestSnapshot(${c.id})">📷 Тестовый снимок</button>
-                        </div>
-                    </div>
-                `).join('') || 'Нет камер';
-                // Заполняем select списка камер
-                const select = document.getElementById('cameraSelect');
-                select.innerHTML = '<option value="">Все камеры</option>';
-                allCameras.forEach(c => {
-                    const opt = document.createElement('option');
-                    opt.value = c.id;
-                    opt.textContent = c.name;
-                    select.appendChild(opt);
-                });
-                loadGallery();
-            } catch(e) {
-                document.getElementById('cameras').innerText = 'Ошибка загрузки камер';
-            }
-        }
-
-        async function loadGallery() {
-            const cameraId = document.getElementById('cameraSelect').value;
-            const start = document.getElementById('startDate').value;
-            const end = document.getElementById('endDate').value;
-            let url = '/api/screenshots?limit=50';
-            if (cameraId) url += `&camera_id=${cameraId}`;
-            if (start) url += `&start=${start}`;
-            if (end) url += `&end=${end}`;
-            try {
-                const res = await fetch(url);
-                const data = await res.json();
-                const gal = document.getElementById('gallery');
-                gal.innerHTML = (data.items || []).map(s => {
-                    const title = s.description ? ` title="${s.description}"` : '';
-                    return `<img src="${s.url}"${title} onclick="window.open(this.src)">`;
-                }).join('');
-            } catch(e) {
-                console.error(e);
-            }
-        }
-
-        document.getElementById('addForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const form = e.target;
-            const payload = {};
-            new FormData(form).forEach((v, k) => {
-                if (['sensitivity','detection_interval','screenshot_quality'].includes(k))
-                    payload[k] = parseInt(v);
-                else payload[k] = v;
-            });
-            try {
-                const res = await fetch(`/api/orangepi/${piId}/cameras`, {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                if (res.ok) {
-                    form.reset();
-                    loadCameras();
-                } else {
-                    const err = await res.json();
-                    alert('Ошибка: ' + (err.detail || res.statusText));
-                }
-            } catch(err) {
-                alert('Сетевая ошибка: ' + err.message);
-            }
+<a href="/" class="btn">⬅ Назад</a>
+<h1>📹 Устройство #<span id="piId"></span></h1>
+<p id="lastSeenDevice">Загрузка...</p>
+<button class="btn" onclick="openScanModal()">🔍 Сканировать камеры</button>
+<button class="btn" onclick="syncDevice()">🔄 Синхронизировать</button>
+<h2>Камеры</h2><div id="cameras">Загрузка...</div>
+<h2>Галерея</h2><div class="gallery" id="gallery"></div>
+<script>
+    const piId = window.location.pathname.split('/')[2];
+    document.getElementById('piId').innerText = piId;
+    function updateDeviceLastSeen() {
+        fetch(`/api/orangepi/${piId}`).then(r=>r.json()).then(pi=>{
+            document.getElementById('lastSeenDevice').innerText = 'Последняя активность: ' + new Date(pi.last_heartbeat).toLocaleString();
         });
-
-        function openEditModal(camera) {
-            document.getElementById('editCameraId').value = camera.id;
-            document.getElementById('editName').value = camera.name || '';
-            document.getElementById('editIp').value = camera.ip_address || '';
-            document.getElementById('editUsername').value = camera.username || '';
-            document.getElementById('editPassword').value = camera.password || '';
-            document.getElementById('editRtsp').value = camera.rtsp_url || '';
-            document.getElementById('editSensitivity').value = camera.sensitivity || 50;
-            document.getElementById('editInterval').value = camera.detection_interval || 30;
-            document.getElementById('editAnalysisPrompt').value = camera.analysis_prompt || '';
-            document.getElementById('editReportPrompt').value = camera.report_prompt || '';
-            document.getElementById('editQuality').value = camera.screenshot_quality || 320;
-            document.getElementById('editModal').style.display = 'flex';
-        }
-
-        function closeEditModal() {
-            document.getElementById('editModal').style.display = 'none';
-        }
-
-        async function saveEdit() {
-            const id = document.getElementById('editCameraId').value;
-            const payload = {
-                name: document.getElementById('editName').value,
-                ip_address: document.getElementById('editIp').value,
-                username: document.getElementById('editUsername').value,
-                password: document.getElementById('editPassword').value,
-                rtsp_url: document.getElementById('editRtsp').value,
-                sensitivity: parseInt(document.getElementById('editSensitivity').value) || 50,
-                detection_interval: parseInt(document.getElementById('editInterval').value) || 30,
-                analysis_prompt: document.getElementById('editAnalysisPrompt').value,
-                report_prompt: document.getElementById('editReportPrompt').value,
-                screenshot_quality: parseInt(document.getElementById('editQuality').value) || 320
-            };
-            try {
-                const res = await fetch(`/api/cameras/${id}`, {
-                    method: 'PUT',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                if (res.ok) {
-                    closeEditModal();
-                    loadCameras();
-                } else {
-                    const err = await res.json();
-                    alert('Ошибка сохранения: ' + (err.detail || res.statusText));
-                }
-            } catch(err) {
-                alert('Сетевая ошибка: ' + err.message);
-            }
-        }
-
-        async function requestSnapshot(cameraId) {
-            try {
-                const res = await fetch(`/api/cameras/${cameraId}/snapshot`, { method: 'POST' });
-                const data = await res.json();
-                alert(data.message || 'Запрос отправлен');
-            } catch(err) {
-                alert('Ошибка: ' + err.message);
-            }
-        }
-
-        loadCameras();
-    </script>
+    }
+    async function loadCameras() {
+        const res = await fetch(`/api/orangepi/${piId}/cameras`);
+        const cams = await res.json();
+        document.getElementById('cameras').innerHTML = cams.map(c=>`<div class="camera"><b>${c.name}</b></div>`).join('') || 'Нет камер';
+    }
+    async function loadGallery() {
+        const res = await fetch(`/api/screenshots?device_id=${piId}&limit=50`);
+        const data = await res.json();
+        document.getElementById('gallery').innerHTML = data.items.map(s=>`<img src="${s.url}" title="${s.description||''}">`).join('');
+    }
+    function syncDevice() { fetch(`/api/orangepi/${piId}/sync`, {method:'POST'}); alert('Команда отправлена'); }
+    function openScanModal() { alert('Сканирование запущено (заглушка)'); }
+    updateDeviceLastSeen(); loadCameras(); loadGallery();
+</script>
 </body>
 </html>

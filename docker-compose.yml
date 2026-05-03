@@ -8,9 +8,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      - TZ=Europe/Moscow
-      - OLLAMA_BASE_URL=http://192.168.31.127:9874
+      - TZ=Asia/Yekaterinburg
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
     networks:
       - monitor-net
 
